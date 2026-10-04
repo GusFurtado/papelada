@@ -466,6 +466,23 @@
     viewDialog.showModal();
   }
 
+  // Backdrop clicks are dispatched to the dialog element itself, so check the
+  // position too; a drag that merely ends outside the box doesn't count.
+  function closeOnBackdropClick(dialog) {
+    var pressedOutside = false;
+    function isOutside(ev) {
+      var box = dialog.getBoundingClientRect();
+      return ev.target === dialog &&
+        (ev.clientX < box.left || ev.clientX > box.right || ev.clientY < box.top || ev.clientY > box.bottom);
+    }
+    dialog.addEventListener('pointerdown', function (ev) { pressedOutside = isOutside(ev); });
+    dialog.addEventListener('click', function (ev) {
+      if (pressedOutside && isOutside(ev)) dialog.close();
+    });
+  }
+
+  closeOnBackdropClick(viewDialog);
+
   $('closeViewBtn').addEventListener('click', function () { viewDialog.close(); });
 
   $('editDocumentBtn').addEventListener('click', function () {
