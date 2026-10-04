@@ -284,17 +284,23 @@
     documents.forEach(function (doc) {
       doc.tags.forEach(function (tagId) { used[tagId] = true; });
     });
-    tags.filter(function (tag) { return used[tag.id]; }).forEach(function (tag) {
-      var chip = el('button', activeTagId === tag.id ? 'active' : '', tag.name);
+    var usedTags = tags.filter(function (tag) { return used[tag.id]; });
+    tagFilter.hidden = !usedTags.length;
+    if (!usedTags.length) return;
+
+    function addChip(tagId, label) {
+      var chip = el('button', activeTagId === tagId ? 'active' : '', label);
       chip.type = 'button';
       chip.addEventListener('click', function () {
-        activeTagId = activeTagId === tag.id ? null : tag.id;
+        activeTagId = activeTagId === tagId ? null : tagId;
         exitSelectMode();
         renderDocuments();
       });
       tagFilter.appendChild(chip);
-    });
-    tagFilter.hidden = !tagFilter.children.length;
+    }
+
+    addChip(null, t('allTags'));
+    usedTags.forEach(function (tag) { addChip(tag.id, tag.name); });
   }
 
   function visibleDocuments() {
