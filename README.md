@@ -69,6 +69,9 @@ Then open http://localhost:8080.
 Create the documents folder yourself before starting. If Docker creates it, it
 belongs to root, and Papelada (which never runs as root) can't write to it.
 
+`latest` is the newest release. To stay on one version, use its tag instead, e.g.
+`ghcr.io/gusfurtado/papelada:0.1.0`, or `:0.1` to also get its 0.1.x bug-fix releases.
+
 ### Configuration
 
 Set these in `.env`, next to `docker-compose.yml`:

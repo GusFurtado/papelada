@@ -1,12 +1,32 @@
 name: Docker image
 
+# Images are published from releases only, and only when the release's tag is a
+# version: v1.2.3 or 1.2.3, optionally with a pre-release suffix (v1.2.3-rc.1).
+# A full release is tagged 1.2.3, 1.2 and latest; a pre-release only 1.2.3-rc.1.
 on:
-  push:
-    branches: [main]
-    tags: ["v*"]
+  release:
+    types: [published]
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      is_version: ${{ steps.tag.outputs.is_version }}
+    steps:
+      - id: tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ "$TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "is_version=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Release tag '$TAG' isn't a version (like v1.2.3), so no image is published."
+            echo "is_version=false" >> "$GITHUB_OUTPUT"
+          fi
+
   publish:
+    needs: check
+    if: needs.check.outputs.is_version == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,10 +44,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          flavor: latest=false
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ github.event.release.tag_name }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ github.event.release.tag_name }},enable=${{ !github.event.release.prerelease }}
+            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
       - uses: docker/build-push-action@v6
         with:
           context: .

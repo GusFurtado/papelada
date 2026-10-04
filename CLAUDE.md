@@ -72,6 +72,15 @@ What changed on purpose:
   `multiple` + `capture` is unreliable on phones; "Add files" is a separate
   `multiple` input.
 
+## Releases
+
+The Docker image is published only from GitHub releases whose tag is a version
+(`v1.2.3` or `1.2.3`, optionally `-rc.1`...), never from pushes to `main`. This is
+deliberate: `latest` is what the README tells people to run, so it must always be a
+release. A full release gets `1.2.3`, `1.2` and `latest`. A release marked as a
+pre-release gets only `1.2.3-rc.1`. Releases with any other tag publish nothing.
+See `.github/workflows/docker.yml`.
+
 ## Testing
 
 `pytest` covers storage (naming, collisions, renames, tags, crop, every encryption
