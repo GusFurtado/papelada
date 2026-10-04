@@ -184,6 +184,22 @@
     return ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'application/pdf'].indexOf(page.mime) !== -1;
   }
 
+  // For dialogs with nothing typed in them to lose; forms close with Cancel only.
+  // Backdrop clicks are dispatched to the dialog element itself, so check the
+  // position too; a drag that merely ends outside the box doesn't count.
+  function closeOnBackdropClick(dialog, canClose) {
+    var pressedOutside = false;
+    function isOutside(ev) {
+      var box = dialog.getBoundingClientRect();
+      return ev.target === dialog &&
+        (ev.clientX < box.left || ev.clientX > box.right || ev.clientY < box.top || ev.clientY > box.bottom);
+    }
+    dialog.addEventListener('pointerdown', function (ev) { pressedOutside = isOutside(ev); });
+    dialog.addEventListener('click', function (ev) {
+      if (pressedOutside && isOutside(ev) && (!canClose || canClose())) dialog.close();
+    });
+  }
+
   function confirmAction(message, confirmLabel) {
     return new Promise(function (resolve) {
       $('confirmMessage').textContent = message;
@@ -470,21 +486,6 @@
       viewPages.appendChild(figure);
     });
     viewDialog.showModal();
-  }
-
-  // Backdrop clicks are dispatched to the dialog element itself, so check the
-  // position too; a drag that merely ends outside the box doesn't count.
-  function closeOnBackdropClick(dialog) {
-    var pressedOutside = false;
-    function isOutside(ev) {
-      var box = dialog.getBoundingClientRect();
-      return ev.target === dialog &&
-        (ev.clientX < box.left || ev.clientX > box.right || ev.clientY < box.top || ev.clientY > box.bottom);
-    }
-    dialog.addEventListener('pointerdown', function (ev) { pressedOutside = isOutside(ev); });
-    dialog.addEventListener('click', function (ev) {
-      if (pressedOutside && isOutside(ev)) dialog.close();
-    });
   }
 
   closeOnBackdropClick(viewDialog);
@@ -900,6 +901,7 @@
     manageDialog.showModal();
   });
 
+  closeOnBackdropClick(manageDialog);
   $('closeManage').addEventListener('click', function () { manageDialog.close(); });
   $('manageNewSection').addEventListener('click', function () { openSectionDialog(null); });
   $('manageNewTag').addEventListener('click', function () {
@@ -955,6 +957,8 @@
     securityDialog.showModal();
   });
 
+  // Not while converting: Close is disabled then too.
+  closeOnBackdropClick(securityDialog, function () { return !$('closeSecurity').disabled; });
   $('closeSecurity').addEventListener('click', function () { securityDialog.close(); });
 
   toggleEncryptionBtn.addEventListener('click', function () {
