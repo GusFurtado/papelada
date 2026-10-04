@@ -1,0 +1,20 @@
+services:
+  papelada:
+    image: ghcr.io/gusfurtado/papelada:latest
+    # To build from source instead, replace `image` with:
+    # build: .
+    container_name: papelada
+    restart: unless-stopped
+    # Papelada writes files as this user, so they're yours to browse and copy.
+    # Use the owner of DOCUMENTS_PATH (`id -u` and `id -g`).
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "${PORT:-8080}:8000"
+    environment:
+      # Optional: only needed to turn encryption on. Keep a copy somewhere safe
+      # and outside the documents folder; without it, encrypted documents are lost.
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+    volumes:
+      # Where your documents live. Each section is a folder here and each
+      # document a file named after its title (unless encryption is on).
+      - ${DOCUMENTS_PATH:-./documents}:/data

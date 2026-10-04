@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Papelada</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#0c1016">
+<link rel="stylesheet" href="vendor/cropper.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Papelada</h1>
+  <div class="header-actions">
+    <button type="button" id="securityBtn" class="ghost" data-i18n-title="encryption"><span class="btn-icon"></span></button>
+    <button type="button" id="manageBtn" class="ghost" data-i18n-title="organize"><span class="btn-icon"></span></button>
+    <button type="button" id="selectModeBtn" class="ghost"><span class="btn-icon"></span><span class="btn-label" data-i18n="select"></span></button>
+    <button type="button" id="uploadBtn"><span class="btn-icon"></span><span class="btn-label" data-i18n="new"></span></button>
+  </div>
+</header>
+
+<nav class="section-tabs" id="sectionTabs"></nav>
+
+<div class="tag-filter" id="tagFilter"></div>
+
+<div id="welcome" class="welcome" hidden>
+  <h2 data-i18n="welcomeTitle"></h2>
+  <p data-i18n="welcomeText"></p>
+  <button type="button" id="welcomeNewSection" class="primary"><span class="btn-icon"></span><span data-i18n="newSection"></span></button>
+</div>
+
+<p id="emptyList" class="empty-list" hidden></p>
+
+<div id="documentList" class="document-list"></div>
+
+<div id="selectionBar" class="selection-bar" hidden>
+  <span id="selectionCount"></span>
+  <div class="selection-bar-actions">
+    <button type="button" id="cancelSelection"><span class="btn-icon"></span><span data-i18n="cancel"></span></button>
+    <button type="button" id="downloadSelected" class="primary"><span class="btn-icon"></span><span data-i18n="download"></span></button>
+  </div>
+</div>
+
+<dialog id="documentDialog">
+  <form id="documentForm">
+    <h2 id="documentDialogTitle"></h2>
+
+    <label class="field">
+      <span data-i18n="title"></span>
+      <input type="text" id="titleInput" maxlength="200" data-i18n-placeholder="titlePlaceholder">
+    </label>
+
+    <div class="field-row">
+      <label class="field">
+        <span data-i18n="date"></span>
+        <input type="date" id="dateInput">
+      </label>
+      <label class="field">
+        <span data-i18n="section"></span>
+        <select id="sectionSelect"></select>
+      </label>
+    </div>
+
+    <div class="field">
+      <span data-i18n="tags"></span>
+      <div class="chips" id="formTags"></div>
+      <div class="inline-add">
+        <input type="text" id="newTagInput" maxlength="40" data-i18n-placeholder="newTag">
+        <button type="button" id="addTagBtn" data-i18n-title="add"></button>
+      </div>
+    </div>
+
+    <div class="field" id="newPagesField">
+      <span data-i18n="pages"></span>
+      <div id="pendingPages" class="page-preview"></div>
+      <div class="add-page-buttons">
+        <button type="button" id="takePhotoBtn"><span class="btn-icon"></span><span data-i18n="takePhoto"></span></button>
+        <button type="button" id="addFilesBtn"><span class="btn-icon"></span><span data-i18n="addFiles"></span></button>
+      </div>
+      <input type="file" id="cameraInput" accept="image/*" capture="environment" hidden>
+      <input type="file" id="filesInput" multiple hidden>
+    </div>
+
+    <div class="field" id="editPagesField">
+      <span data-i18n="pages"></span>
+      <div id="editPages" class="page-preview"></div>
+    </div>
+
+    <div class="status" id="documentStatus"></div>
+
+    <div class="dialog-actions">
+      <button type="button" id="cancelDocument" data-i18n="cancel"></button>
+      <button type="submit" id="submitDocument" class="primary"></button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="viewDialog">
+  <h2 id="viewTitle"></h2>
+  <div class="view-meta" id="viewMeta"></div>
+  <div class="chips view-tags" id="viewTags"></div>
+  <div id="viewPages"></div>
+  <div class="dialog-actions icon-actions">
+    <button type="button" id="editDocumentBtn" data-i18n-title="edit"></button>
+    <button type="button" id="deleteDocumentBtn" data-i18n-title="delete"></button>
+    <button type="button" id="closeViewBtn" data-i18n-title="close"></button>
+  </div>
+</dialog>
+
+<dialog id="cropDialog">
+  <h2 data-i18n="cropImage"></h2>
+  <div class="crop-container">
+    <img id="cropImage" alt="">
+  </div>
+  <div class="status" id="cropStatus"></div>
+  <div class="dialog-actions">
+    <button type="button" id="cancelCrop" data-i18n="cancel"></button>
+    <button type="button" id="saveCrop" class="primary" data-i18n="saveCrop"></button>
+  </div>
+</dialog>
+
+<dialog id="sectionDialog">
+  <form id="sectionForm">
+    <h2 id="sectionDialogTitle"></h2>
+    <label class="field">
+      <span data-i18n="name"></span>
+      <input type="text" id="sectionNameInput" maxlength="60" data-i18n-placeholder="sectionNamePlaceholder">
+    </label>
+    <div class="field">
+      <span data-i18n="icon"></span>
+      <div class="icon-grid" id="iconGrid"></div>
+    </div>
+    <p class="hint" id="sectionFolderHint"></p>
+    <div class="status" id="sectionStatus"></div>
+    <div class="dialog-actions">
+      <button type="button" id="deleteSectionBtn" class="danger-link" data-i18n="delete"></button>
+      <button type="button" id="cancelSection" data-i18n="cancel"></button>
+      <button type="submit" class="primary" data-i18n="save"></button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="manageDialog">
+  <h2 data-i18n="organize"></h2>
+  <h3 data-i18n="sections"></h3>
+  <ul class="manage-list" id="manageSections"></ul>
+  <button type="button" id="manageNewSection" class="add-row"><span class="btn-icon"></span><span data-i18n="newSection"></span></button>
+  <h3 data-i18n="tags"></h3>
+  <ul class="manage-list" id="manageTags"></ul>
+  <button type="button" id="manageNewTag" class="add-row"><span class="btn-icon"></span><span data-i18n="newTag"></span></button>
+  <div class="dialog-actions">
+    <button type="button" id="closeManage" data-i18n="close"></button>
+  </div>
+</dialog>
+
+<dialog id="nameDialog">
+  <form id="nameForm">
+    <h2 id="nameDialogTitle"></h2>
+    <label class="field">
+      <span data-i18n="name"></span>
+      <input type="text" id="nameInput" maxlength="40">
+    </label>
+    <div class="status" id="nameStatus"></div>
+    <div class="dialog-actions">
+      <button type="button" id="cancelName" data-i18n="cancel"></button>
+      <button type="submit" class="primary" data-i18n="save"></button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="securityDialog">
+  <h2 data-i18n="encryption"></h2>
+  <p id="securityState" class="security-state"></p>
+  <p id="securityHelp" class="security-help"></p>
+  <div class="status" id="securityStatus"></div>
+  <div class="dialog-actions">
+    <button type="button" id="closeSecurity" data-i18n="close"></button>
+    <button type="button" id="toggleEncryption" class="primary"></button>
+  </div>
+</dialog>
+
+<dialog id="confirmDialog">
+  <p id="confirmMessage"></p>
+  <div class="dialog-actions">
+    <button type="button" id="confirmCancel" data-i18n="cancel"></button>
+    <button type="button" id="confirmOk" class="danger"></button>
+  </div>
+</dialog>
+
+<script src="vendor/cropper.min.js"></script>
+<script src="icons.js"></script>
+<script src="i18n.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
