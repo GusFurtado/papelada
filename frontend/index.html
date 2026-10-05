@@ -10,15 +10,17 @@
 <meta name="theme-color" content="#0c1016">
 <link rel="stylesheet" href="vendor/cropper.min.css">
 <link rel="stylesheet" href="style.css">
+<script src="theme.js"></script>
 </head>
 <body>
 <header>
   <h1>Papelada</h1>
   <div class="header-actions">
+    <button type="button" id="logoutBtn" class="ghost" data-i18n-title="logout" hidden><span class="btn-icon"></span></button>
     <button type="button" id="securityBtn" class="ghost" data-i18n-title="encryption"><span class="btn-icon"></span></button>
-    <button type="button" id="manageBtn" class="ghost" data-i18n-title="organize"><span class="btn-icon"></span></button>
-    <button type="button" id="selectModeBtn" class="ghost"><span class="btn-icon"></span><span class="btn-label" data-i18n="select"></span></button>
-    <button type="button" id="uploadBtn"><span class="btn-icon"></span><span class="btn-label" data-i18n="new"></span></button>
+    <button type="button" id="manageBtn" class="ghost" data-i18n-title="settings"><span class="btn-icon"></span></button>
+    <button type="button" id="selectModeBtn" class="ghost" data-i18n-title="select"><span class="btn-icon"></span><span class="btn-label" data-i18n="select"></span></button>
+    <button type="button" id="uploadBtn" data-i18n-title="new"><span class="btn-icon"></span><span class="btn-label" data-i18n="new"></span></button>
   </div>
 </header>
 
@@ -144,13 +146,21 @@
 </dialog>
 
 <dialog id="manageDialog">
-  <h2 data-i18n="organize"></h2>
+  <h2 data-i18n="settings"></h2>
+  <h3 data-i18n="theme"></h3>
+  <div class="theme-grid" id="themeGrid"></div>
   <h3 data-i18n="sections"></h3>
   <ul class="manage-list" id="manageSections"></ul>
   <button type="button" id="manageNewSection" class="add-row"><span class="btn-icon"></span><span data-i18n="newSection"></span></button>
   <h3 data-i18n="tags"></h3>
   <ul class="manage-list" id="manageTags"></ul>
   <button type="button" id="manageNewTag" class="add-row"><span class="btn-icon"></span><span data-i18n="newTag"></span></button>
+  <div id="scanField">
+    <h3 data-i18n="volume"></h3>
+    <p class="hint" data-i18n="scanHelp"></p>
+    <button type="button" id="scanBtn" class="add-row"><span class="btn-icon"></span><span data-i18n="scan"></span></button>
+    <div class="status" id="scanStatus"></div>
+  </div>
   <div class="dialog-actions">
     <button type="button" id="closeManage" data-i18n="close"></button>
   </div>
@@ -180,6 +190,24 @@
     <button type="button" id="closeSecurity" data-i18n="close"></button>
     <button type="button" id="toggleEncryption" class="primary"></button>
   </div>
+</dialog>
+
+<dialog id="loginDialog">
+  <form id="loginForm">
+    <h2 data-i18n="loginTitle"></h2>
+    <label class="field">
+      <span data-i18n="username"></span>
+      <input type="text" id="usernameInput" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false">
+    </label>
+    <label class="field">
+      <span data-i18n="password"></span>
+      <input type="password" id="passwordInput" autocomplete="current-password">
+    </label>
+    <div class="status" id="loginStatus"></div>
+    <div class="dialog-actions">
+      <button type="submit" id="loginSubmit" class="primary" data-i18n="login"></button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="confirmDialog">

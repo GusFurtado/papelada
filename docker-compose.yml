@@ -14,6 +14,9 @@ services:
       # Optional: only needed to turn encryption on. Keep a copy somewhere safe
       # and outside the documents folder; without it, encrypted documents are lost.
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      # Optional: set both to ask for a login. Leave both empty for no login.
+      - USERNAME=${USERNAME:-}
+      - PASSWORD=${PASSWORD:-}
     volumes:
       # Where your documents live. Each section is a folder here and each
       # document a file named after its title (unless encryption is on).

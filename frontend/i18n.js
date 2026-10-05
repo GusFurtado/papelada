@@ -16,7 +16,14 @@ var I18N = (function () {
       openFile: 'Open',
       add: 'Add',
       encryption: 'Encryption',
-      organize: 'Sections and tags',
+      settings: 'Settings',
+      theme: 'Theme',
+      'theme.midnight': 'Midnight',
+      'theme.forest': 'Forest',
+      'theme.plum': 'Plum',
+      'theme.paper': 'Paper',
+      'theme.sky': 'Sky',
+      'theme.rose': 'Rose',
       sections: 'Sections',
       tags: 'Tags',
       allTags: 'All',
@@ -30,6 +37,22 @@ var I18N = (function () {
       renameTag: 'Rename tag',
       noTags: 'No tags yet. Tags work across sections, e.g. Health, Taxes, Travel.',
       docCount: function (v) { return v.n === 1 ? '1 document' : v.n + ' documents'; },
+      loginTitle: 'Sign in',
+      username: 'Username',
+      password: 'Password',
+      login: 'Sign in',
+      logout: 'Sign out',
+      signingIn: 'Signing in...',
+      volume: 'Volume',
+      scan: 'Scan for new files',
+      scanHelp: 'Files and folders you added to the volume by hand become documents and sections.',
+      scanning: 'Scanning...',
+      scanResult: function (v) {
+        if (!v.documents && !v.sections) return 'Nothing new found.';
+        var docs = v.documents === 1 ? '1 document' : v.documents + ' documents';
+        var secs = v.sections === 1 ? '1 new section' : v.sections + ' new sections';
+        return v.sections ? 'Added ' + docs + ' and ' + secs + '.' : 'Added ' + docs + '.';
+      },
       moveUp: 'Move up',
       moveDown: 'Move down',
       newDocument: 'New document',
@@ -85,7 +108,13 @@ var I18N = (function () {
       'errors.too_long': 'That name is too long.',
       'errors.invalid_date': 'Choose a date.',
       'errors.file_in_the_way': 'There\'s a file in the way at {path}. Move it out of the volume and try again.',
-      'errors.encryption_unavailable': 'Encryption needs ENCRYPTION_KEY to be set.'
+      'errors.encryption_unavailable': 'Encryption needs ENCRYPTION_KEY to be set.',
+      'errors.scan_needs_plain': 'Scanning only works while encryption is off.',
+      'errors.invalid_credentials': 'Wrong username or password.',
+      'errors.too_many_attempts': function (v) {
+        var minutes = Math.max(1, Math.ceil((v.retry_after || 60) / 60));
+        return 'Too many attempts. Try again in ' + (minutes === 1 ? '1 minute.' : minutes + ' minutes.');
+      }
     },
     'pt-BR': {
       new: 'Novo',
@@ -100,7 +129,14 @@ var I18N = (function () {
       openFile: 'Abrir',
       add: 'Adicionar',
       encryption: 'Criptografia',
-      organize: 'Seções e tags',
+      settings: 'Ajustes',
+      theme: 'Tema',
+      'theme.midnight': 'Meia-noite',
+      'theme.forest': 'Floresta',
+      'theme.plum': 'Ameixa',
+      'theme.paper': 'Papel',
+      'theme.sky': 'Céu',
+      'theme.rose': 'Rosa',
       sections: 'Seções',
       tags: 'Tags',
       allTags: 'Todos',
@@ -114,6 +150,22 @@ var I18N = (function () {
       renameTag: 'Renomear tag',
       noTags: 'Nenhuma tag ainda. As tags valem para todas as seções, ex.: Saúde, Impostos, Viagem.',
       docCount: function (v) { return v.n === 1 ? '1 documento' : v.n + ' documentos'; },
+      loginTitle: 'Entrar',
+      username: 'Usuário',
+      password: 'Senha',
+      login: 'Entrar',
+      logout: 'Sair',
+      signingIn: 'Entrando...',
+      volume: 'Volume',
+      scan: 'Procurar arquivos novos',
+      scanHelp: 'Arquivos e pastas que você colocou no volume à mão viram documentos e seções.',
+      scanning: 'Procurando...',
+      scanResult: function (v) {
+        if (!v.documents && !v.sections) return 'Nada de novo encontrado.';
+        var docs = v.documents === 1 ? '1 documento' : v.documents + ' documentos';
+        var secs = v.sections === 1 ? '1 seção nova' : v.sections + ' seções novas';
+        return v.sections ? docs + ' e ' + secs + ' adicionados.' : docs + (v.documents === 1 ? ' adicionado.' : ' adicionados.');
+      },
       moveUp: 'Mover para cima',
       moveDown: 'Mover para baixo',
       newDocument: 'Novo documento',
@@ -170,7 +222,13 @@ var I18N = (function () {
       'errors.too_long': 'Esse nome é longo demais.',
       'errors.invalid_date': 'Escolha uma data.',
       'errors.file_in_the_way': 'Há um arquivo no caminho em {path}. Tire-o do volume e tente novamente.',
-      'errors.encryption_unavailable': 'A criptografia precisa de ENCRYPTION_KEY definida.'
+      'errors.encryption_unavailable': 'A criptografia precisa de ENCRYPTION_KEY definida.',
+      'errors.scan_needs_plain': 'A busca só funciona com a criptografia desativada.',
+      'errors.invalid_credentials': 'Usuário ou senha incorretos.',
+      'errors.too_many_attempts': function (v) {
+        var minutes = Math.max(1, Math.ceil((v.retry_after || 60) / 60));
+        return 'Muitas tentativas. Tente novamente em ' + (minutes === 1 ? '1 minuto.' : minutes + ' minutos.');
+      }
     }
   };
 

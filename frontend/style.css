@@ -76,9 +76,87 @@
   --accent-soft: rgba(91, 155, 213, 0.14);
   --accent-ink: #0c1016;
   --bad: #ff5d5d;
+  --bad-ink: #1a0505;
   --serif: 'Instrument Serif', Georgia, serif;
   --sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
   --mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+/* Themes: only colors change. The default (Midnight) is the :root set above;
+   frontend/theme.js sets data-theme on <html>. */
+:root[data-theme="forest"] {
+  --bg: #0d1511;
+  --bg-panel: #131d18;
+  --bg-panel-2: #192520;
+  --ink: #eaf2ed;
+  --ink-dim: #93aa9c;
+  --ink-faint: #5a7164;
+  --rule: #23332b;
+  --accent: #4fb286;
+  --accent-soft: rgba(79, 178, 134, 0.15);
+  --accent-ink: #07130d;
+}
+
+:root[data-theme="plum"] {
+  --bg: #130f18;
+  --bg-panel: #1a1520;
+  --bg-panel-2: #211b29;
+  --ink: #f2eef6;
+  --ink-dim: #a597b3;
+  --ink-faint: #6d5f7b;
+  --rule: #302739;
+  --accent: #b685e0;
+  --accent-soft: rgba(182, 133, 224, 0.15);
+  --accent-ink: #15091e;
+}
+
+:root[data-theme="paper"] {
+  --bg: #f6f3ec;
+  --bg-panel: #fffdf8;
+  --bg-panel-2: #efeadf;
+  --ink: #22201b;
+  --ink-dim: #5f594d;
+  --ink-faint: #8d8575;
+  --rule: #ddd6c5;
+  --accent: #a8561b;
+  --accent-soft: rgba(168, 86, 27, 0.12);
+  --accent-ink: #ffffff;
+  --bad: #c62828;
+  --bad-ink: #ffffff;
+  color-scheme: light;
+}
+
+:root[data-theme="sky"] {
+  --bg: #f1f5fa;
+  --bg-panel: #ffffff;
+  --bg-panel-2: #e7eef6;
+  --ink: #131c28;
+  --ink-dim: #4b5b6e;
+  --ink-faint: #7f8da0;
+  --rule: #d5dfeb;
+  --accent: #1d6fc2;
+  --accent-soft: rgba(29, 111, 194, 0.12);
+  --accent-ink: #ffffff;
+  --bad: #c62828;
+  --bad-ink: #ffffff;
+  color-scheme: light;
+}
+
+:root[data-theme="rose"] {
+  --bg: #fbf3f4;
+  --bg-panel: #ffffff;
+  --bg-panel-2: #f5e8ea;
+  --ink: #2a1a1e;
+  --ink-dim: #6b4f56;
+  --ink-faint: #9b8187;
+  --rule: #ead7da;
+  --accent: #b83a5a;
+  --accent-soft: rgba(184, 58, 90, 0.12);
+  --accent-ink: #ffffff;
+  --bad: #c62828;
+  --bad-ink: #ffffff;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -149,6 +227,7 @@ header button.ghost {
   border-color: var(--rule);
 }
 
+#logoutBtn,
 #securityBtn,
 #manageBtn {
   padding: 8px 9px;
@@ -169,9 +248,11 @@ header button.ghost {
   stroke-width: 3;
 }
 
-@media (max-width: 420px) {
-  #selectModeBtn .btn-label { display: none; }
-  #selectModeBtn { padding: 8px 9px; }
+@media (max-width: 480px) {
+  header { gap: 8px; }
+  .header-actions { gap: 6px; }
+  header .btn-label { display: none; }
+  header button { padding: 8px 9px; }
 }
 
 /* --- sections and tag filter --------------------------------------------------- */
@@ -354,7 +435,7 @@ header button.ghost {
   bottom: 4px;
   right: 4px;
   background: rgba(0, 0, 0, 0.65);
-  color: var(--ink);
+  color: #fff;
   font-size: 0.65rem;
   padding: 1px 6px;
   border-radius: 10px;
@@ -457,7 +538,6 @@ dialog h3 {
   border-radius: 6px;
   width: 100%;
   min-width: 0;
-  color-scheme: dark;
 }
 
 .field input:focus,
@@ -545,7 +625,7 @@ dialog h3 {
 .dialog-actions button.danger {
   background: var(--bad);
   border-color: var(--bad);
-  color: #1a0505;
+  color: var(--bad-ink);
 }
 
 .dialog-actions .danger-link {
@@ -747,7 +827,7 @@ dialog h3 {
   border: none;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.65);
-  color: var(--ink);
+  color: #fff;
   padding: 0;
   display: flex;
   align-items: center;
@@ -957,4 +1037,45 @@ dialog h3 {
 
 #manageDialog .dialog-actions {
   margin-top: 16px;
+}
+
+/* --- theme picker -------------------------------------------------------------------- */
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.theme-grid button {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px;
+  background: var(--bg-panel-2);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  color: var(--ink-dim);
+  font-size: 0.75rem;
+}
+
+.theme-grid button.active {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.theme-swatch {
+  display: flex;
+  align-items: flex-end;
+  height: 32px;
+  padding: 4px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 5px;
+}
+
+.theme-swatch i {
+  width: 40%;
+  height: 8px;
+  border-radius: 4px;
 }

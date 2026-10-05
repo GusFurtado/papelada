@@ -63,6 +63,8 @@ MIME_EXTENSIONS = {
 _SEPARATORS = re.compile(r"[/\\:]")
 _FORBIDDEN = re.compile(r'[*?"<>|\x00-\x1f\x7f]')
 _WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"{p}{i}" for p in ("COM", "LPT") for i in range(1, 10)}
+_MIME_BY_EXTENSION = {ext: mime for mime, ext in MIME_EXTENSIONS.items()}
+_MIME_BY_EXTENSION.update({".jpeg": "image/jpeg", ".jpe": "image/jpeg", ".tif": "image/tiff"})
 _ICON = re.compile(r"[a-z0-9-]{1,40}")
 _EXTENSION = re.compile(r"\.[a-z0-9]{1,10}")
 
@@ -511,6 +513,101 @@ class Library:
             _atomic_write(self.settings_path, json.dumps({"encrypted": enabled}).encode())
             self._save_index()
             return self._converge()
+
+    def scan(self) -> dict:
+        """Picks up what someone put in the volume by hand: every file in a
+        section's folder that no document owns becomes a document of that
+        section, and every top-level folder that's no section's becomes a
+        section (default icon) with its files as documents. Files keep their
+        names (a document's stem and extension are taken from the file name, so
+        nothing is renamed) and dated from the file. Plain mode only, since an
+        encrypted library has no section folders. Returns what was added."""
+        with self.lock:
+            if self.encrypted:
+                raise Conflict("scan_needs_plain")
+            added = {"sections": 0, "documents": 0}
+            known = {section["folder"].casefold() for section in self.index["sections"]}
+            for folder in sorted(self._visible(self.root, dirs=True), key=lambda e: e.name.casefold()):
+                if folder.name.casefold() in known:
+                    continue
+                name = self._unique_section_name(folder.name)
+                if name is None:
+                    continue
+                self.index["sections"].append(
+                    {"id": uuid.uuid4().hex, "name": name, "icon": "folder", "folder": folder.name}
+                )
+                added["sections"] += 1
+            for section in self.index["sections"]:
+                added["documents"] += self._adopt_files(section)
+            if added["sections"] or added["documents"]:
+                self._save_index()
+            return added
+
+    @staticmethod
+    def _visible(folder: Path, dirs: bool) -> List[Path]:
+        if not folder.is_dir():
+            return []
+        return [
+            entry for entry in folder.iterdir()
+            if not entry.name.startswith(".") and (entry.is_dir() if dirs else entry.is_file())
+        ]
+
+    def _unique_section_name(self, folder_name: str) -> Optional[str]:
+        base = unicodedata.normalize("NFC", re.sub(r"\s+", " ", folder_name)).strip()[:MAX_SECTION_NAME].strip()
+        if not base:
+            return None
+        for n in itertools.count(1):
+            candidate = base if n == 1 else f"{base[:MAX_SECTION_NAME - 4].rstrip()} ({n})"
+            if not any(s["name"].casefold() == candidate.casefold() for s in self.index["sections"]):
+                return candidate
+
+    def _adopt_files(self, section: dict) -> int:
+        """Turns the section folder's unknown files into documents."""
+        owned, stems = set(), set()
+        for doc in self.index["documents"].values():
+            if doc["section"] == section["id"]:
+                stems.add(doc["stem"].casefold())
+                owned.update(name.casefold() for name in self._file_names(doc))
+        count = 0
+        for entry in sorted(self._visible(self.root / section["folder"], dirs=False), key=lambda e: e.name.casefold()):
+            if entry.name.casefold() in owned:
+                continue
+            size = entry.stat().st_size
+            if not size:
+                continue
+            # A document's stem is unique per section; "a.jpg" next to "a.png" is
+            # the second one's whole file name, with no extension of its own.
+            suffix = entry.suffix if _EXTENSION.fullmatch(entry.suffix.lower()) else ""
+            stem, ext = entry.name[: len(entry.name) - len(suffix)], suffix
+            if stem.casefold() in stems:
+                stem, ext = entry.name, ""
+                if stem.casefold() in stems:
+                    continue
+            title = unicodedata.normalize("NFC", re.sub(r"\s+", " ", stem)).strip()[:MAX_TITLE].strip() or stem
+            mtime = datetime.fromtimestamp(entry.stat().st_mtime)
+            self.index["documents"][uuid.uuid4().hex] = {
+                "section": section["id"],
+                "title": title,
+                "date": mtime.strftime("%Y-%m-%d"),
+                "tags": [],
+                "uploaded_at": datetime.now().astimezone().isoformat(),
+                "stem": stem,
+                "pages": [{
+                    "id": uuid.uuid4().hex,
+                    "filename": entry.name,
+                    "mime": _MIME_BY_EXTENSION.get(suffix.lower())
+                    or mimetypes.guess_type(entry.name)[0]
+                    or "application/octet-stream",
+                    "ext": ext,
+                    "size": size,
+                    "rev": 0,
+                    "cropped": False,
+                }],
+            }
+            stems.add(stem.casefold())
+            owned.add(entry.name.casefold())
+            count += 1
+        return count
 
     # --- sections ----------------------------------------------------------
 

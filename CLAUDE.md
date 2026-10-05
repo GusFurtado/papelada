@@ -57,6 +57,27 @@ What changed on purpose:
   compose) so files in the volume belong to the person browsing them. carteira-docs
   left root-owned files in its bind mount that needed `sudo rm`.
 
+## Login, scan and themes (v0.2.0)
+
+- **Login** (`app/auth.py`) is optional and single-user: `USERNAME` + `PASSWORD`
+  (`PASSWORD_FILE`), both or neither (one alone aborts startup). A session is a signed
+  cookie (`expiry.hmac`) under a random per-process key, so nothing about the login
+  touches the volume, and a restart (how credentials are changed) ends all sessions.
+  The key is deliberately not derived from the password: a stolen cookie would allow
+  offline guessing. One middleware guards everything under `/api` except
+  `PUBLIC_API_PATHS`, which also covers `/api/docs`; new routes are protected by default.
+  The cookie has no `Path` on purpose: the browser then scopes it to `<prefix>/api`, which
+  keeps it working behind a path-prefix proxy without leaking to sibling apps.
+  `X-Forwarded-For` is not trusted for throttling (spoofable), so behind a proxy the
+  limits are effectively global.
+- **Scan** (`Library.scan`) adopts files as they are: a document's `stem` and `ext` come from
+  the file name, so nothing is renamed and the computed-path invariant holds. When two
+  files share a stem (`a.jpg`, `a.png`), the second takes its whole name as the stem with an
+  empty `ext`. Plain mode only.
+- **Themes** are `:root[data-theme=...]` blocks in `style.css`; `frontend/theme.js` (loaded
+  in `<head>`, no flash) holds the list and the swatch colors. Overlays on photos use fixed
+  white text, not `--ink`, so they work on light themes.
+
 ## Frontend conventions
 
 - ES5-style vanilla JS, no build step. Only relative URLs (`fetch('api/...')`), so

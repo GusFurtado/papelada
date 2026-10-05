@@ -75,7 +75,13 @@
 
   var confirmDialog = $('confirmDialog');
 
+  var loginDialog = $('loginDialog');
+  var usernameInput = $('usernameInput');
+  var passwordInput = $('passwordInput');
+  var loginStatus = $('loginStatus');
+
   I18N.apply(document);
+  document.querySelector('#logoutBtn .btn-icon').innerHTML = icon('log-out');
   document.querySelector('#securityBtn .btn-icon').innerHTML = icon('lock-open');
   document.querySelector('#manageBtn .btn-icon').innerHTML = icon('settings');
   document.querySelector('#selectModeBtn .btn-icon').innerHTML = icon('square-check-big');
@@ -87,6 +93,7 @@
   document.querySelector('#addFilesBtn .btn-icon').innerHTML = icon('file');
   document.querySelector('#manageNewSection .btn-icon').innerHTML = icon('plus');
   document.querySelector('#manageNewTag .btn-icon').innerHTML = icon('plus');
+  document.querySelector('#scanBtn .btn-icon').innerHTML = icon('refresh-cw');
   $('addTagBtn').innerHTML = icon('plus');
   $('editDocumentBtn').innerHTML = icon('pencil');
   $('deleteDocumentBtn').innerHTML = icon('trash');
@@ -138,6 +145,7 @@
     return fetch(url, options).then(function (res) {
       if (res.ok) return res.json();
       return res.json().catch(function () { return {}; }).then(function (data) {
+        if (res.status === 401 && data.detail === 'login_required') showLogin();
         var err = new Error(typeof data.detail === 'string' ? data.detail : 'request failed');
         err.code = typeof data.detail === 'string' ? data.detail : null;
         err.info = data;
@@ -369,6 +377,7 @@
     selectMode = false;
     selectedIds = [];
     selectModeBtn.querySelector('.btn-label').textContent = t('select');
+    selectModeBtn.title = t('select');
     selectionBar.hidden = true;
     documentList.classList.remove('with-selection-bar');
   }
@@ -392,6 +401,7 @@
       selectMode = true;
       selectedIds = [];
       selectModeBtn.querySelector('.btn-label').textContent = t('cancel');
+      selectModeBtn.title = t('cancel');
       selectionBar.hidden = false;
       documentList.classList.add('with-selection-bar');
       updateSelectionBar();
@@ -866,7 +876,31 @@
     return row;
   }
 
+  function renderThemes() {
+    var grid = $('themeGrid');
+    grid.innerHTML = '';
+    var active = THEME.current().id;
+    THEMES.forEach(function (theme) {
+      var btn = el('button', theme.id === active ? 'active' : '');
+      btn.type = 'button';
+      var swatch = el('span', 'theme-swatch');
+      swatch.style.background = theme.bg;
+      var bar = el('i');
+      bar.style.background = theme.accent;
+      swatch.appendChild(bar);
+      btn.appendChild(swatch);
+      btn.appendChild(el('span', null, t('theme.' + theme.id)));
+      btn.addEventListener('click', function () {
+        THEME.set(theme.id);
+        renderThemes();
+      });
+      grid.appendChild(btn);
+    });
+  }
+
   function renderManage() {
+    renderThemes();
+    $('scanField').hidden = encrypted;
     var sectionList = $('manageSections');
     sectionList.innerHTML = '';
     sections.forEach(function (section, index) {
@@ -897,6 +931,7 @@
   }
 
   $('manageBtn').addEventListener('click', function () {
+    $('scanStatus').textContent = '';
     renderManage();
     manageDialog.showModal();
   });
@@ -904,6 +939,19 @@
   closeOnBackdropClick(manageDialog);
   $('closeManage').addEventListener('click', function () { manageDialog.close(); });
   $('manageNewSection').addEventListener('click', function () { openSectionDialog(null); });
+  $('scanBtn').addEventListener('click', function () {
+    $('scanBtn').disabled = true;
+    $('scanStatus').textContent = t('scanning');
+    api('POST', 'api/scan').then(function (result) {
+      $('scanStatus').textContent = t('scanResult', result);
+      return refresh();
+    }).catch(function (err) {
+      $('scanStatus').textContent = errorMessage(err);
+    }).then(function () {
+      $('scanBtn').disabled = false;
+    });
+  });
+
   $('manageNewTag').addEventListener('click', function () {
     openNameDialog(t('newTag'), '', function (name) {
       return api('POST', 'api/tags', { name: name });
@@ -977,12 +1025,58 @@
     });
   });
 
+  // --- login ------------------------------------------------------------------------------
+
+  // Not dismissable: there's nothing to show until the session is valid.
+  loginDialog.addEventListener('cancel', function (ev) { ev.preventDefault(); });
+
+  function showLogin() {
+    if (loginDialog.open) return;
+    $('logoutBtn').hidden = true;
+    passwordInput.value = '';
+    loginStatus.textContent = '';
+    loginDialog.showModal();
+    (usernameInput.value ? passwordInput : usernameInput).focus();
+  }
+
+  $('loginForm').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    $('loginSubmit').disabled = true;
+    loginStatus.textContent = t('signingIn');
+    api('POST', 'api/login', { username: usernameInput.value, password: passwordInput.value }).then(function () {
+      passwordInput.value = '';
+      loginDialog.close();
+      start(true);
+    }).catch(function (err) {
+      loginStatus.textContent = errorMessage(err);
+      passwordInput.select();
+    }).then(function () {
+      $('loginSubmit').disabled = false;
+    });
+  });
+
+  $('logoutBtn').addEventListener('click', function () {
+    api('POST', 'api/logout').catch(function () {}).then(function () {
+      // Reload rather than clear every bit of state by hand: nothing of the library stays on screen.
+      location.reload();
+    });
+  });
+
   // --- start ------------------------------------------------------------------------------
 
   $('uploadBtn').addEventListener('click', function () {
     if (sections.length) openDocumentDialog(null); else openSectionDialog(null);
   });
 
-  loadSettings().catch(function () {});
-  refresh();
+  function start(loginRequired) {
+    $('logoutBtn').hidden = !loginRequired;
+    loadSettings().catch(function () {});
+    refresh();
+  }
+
+  api('GET', 'api/session').then(function (session) {
+    if (session.authenticated) start(session.login_required); else showLogin();
+  }).catch(function () {
+    start(false);
+  });
 })();
