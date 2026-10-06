@@ -22,10 +22,14 @@ later.
 - **Plain files you can browse.** The documents volume is an ordinary folder tree with
   readable names, so you can open, copy or back it up without the app.
 - **Optional encryption at rest**, switchable any time. The key never lives in the volume.
+- **Optional login** for one user, set with two environment variables.
+- **Scan** the volume to pick up files and folders you added by hand.
+- Six color themes, light and dark.
 - **Download** a selection of documents as a zip, laid out like the volume.
 - English and Brazilian Portuguese, picked from the browser's language.
 - One small container: Python (FastAPI) and a plain JS frontend, no database, no
-  build step, no third-party requests (fonts and libraries are bundled).
+  build step, no third-party requests (fonts and libraries are bundled), except on the
+  API docs page at `/api/docs`, whose Swagger UI loads from a CDN.
 
 ## Your documents on disk
 
@@ -48,7 +52,11 @@ documents with the same title in one section get `Title.jpg` and `Title (2).jpg`
 Names are kept valid on Windows and macOS too, so the folder works over a network share.
 
 You're free to browse and copy anything in the volume and to add your own files to
-it: Papelada ignores files it didn't create and never overwrites them. Don't rename
+it: Papelada never overwrites them. It ignores them until you tap **Scan for new files**
+in the settings (the gear icon): every file in a section's folder it doesn't know
+becomes a document titled after the file, dated from the file, and every new folder
+at the top of the volume becomes a section. Scanning is unavailable while encryption is
+on. Don't rename
 or move the files Papelada created by hand, though. It keeps track of them by name,
 so do that from the app.
 
@@ -82,9 +90,15 @@ Set these in `.env`, next to `docker-compose.yml`:
 | `PORT`           | `8080`        | Port Papelada is served on.                                                         |
 | `PUID` / `PGID`  | `1000`        | User and group the app runs as, which own every file it writes. Use `id -u` / `id -g`. |
 | `ENCRYPTION_KEY` | *(empty)*     | Enables encryption. See below.                                                      |
+| `USERNAME`       | *(empty)*     | Login name. Together with `PASSWORD`, turns the login on. See [Security](#security). |
+| `PASSWORD`       | *(empty)*     | Login password.                                                                     |
 
-To use a Docker secret instead of an environment variable for the key, set
-`ENCRYPTION_KEY_FILE` to the secret's path inside the container.
+To use a Docker secret instead of an environment variable, set `ENCRYPTION_KEY_FILE`
+or `PASSWORD_FILE` to the secret's path inside the container.
+
+`docker compose` also reads variables from your shell, and they win over `.env`. If
+your shell exports a `USERNAME` of its own, Papelada will refuse to start (it has no
+`PASSWORD`) until you unset it or give it one.
 
 ### Encryption
 
@@ -112,12 +126,32 @@ point: a backup of the volume alone doesn't contain it.
 
 ### Security
 
-Papelada has no logins. Anyone who can reach it can see and change every
-document. Run it on your home network, or put it behind something that
-authenticates, such as a VPN (Tailscale, WireGuard), a reverse proxy with
-authentication, or Cloudflare Access. The frontend only uses relative URLs, so it
-also works under a path prefix (e.g. `https://example.com/papelada/`, trailing slash
-included) behind a reverse proxy that strips that prefix.
+By default Papelada has no login: anyone who can reach it can see and change every
+document. Run it on your home network, or turn on the built-in login.
+
+To turn it on, set `USERNAME` and `PASSWORD` (or `PASSWORD_FILE`) and restart. Both
+or neither: with only one of them, Papelada refuses to start. Then:
+
+- Opening the app asks for the username and password, and every API route (including
+  `/api/docs`) rejects requests without a session. Only `/api/health`, which Docker's
+  health check uses, and the login itself are open.
+- A session is a cookie that lasts 14 days, and there is a sign-out button in the
+  header. Restarting Papelada signs everyone out.
+- After 5 wrong passwords from one address in 15 minutes, that address is locked out
+  for the rest of the window (and everyone is, after 50 in total). Behind a reverse
+  proxy, every request comes from the proxy's address, so wrong guesses lock out
+  everyone, you included, until the window passes.
+- There is one user, with no registration and no password reset. To change the
+  credentials, change the variables and restart. The password is never written to the
+  volume and has nothing to do with `ENCRYPTION_KEY`.
+
+The login stops other people on your network, but it's only as private as the
+connection: over plain `http://` the password and the documents travel in the clear.
+Outside your home network, serve Papelada over HTTPS (a reverse proxy, or a VPN such
+as Tailscale or WireGuard), and consider adding a second layer such as Cloudflare
+Access. The frontend only uses relative URLs, so it also works under a path prefix
+(e.g. `https://example.com/papelada/`, trailing slash included) behind a reverse proxy
+that strips that prefix.
 
 ### Backups
 

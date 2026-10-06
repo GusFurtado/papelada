@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import shutil
 import zipfile
 
@@ -400,3 +401,72 @@ def test_missing_file_is_reported(lib, tmp_path):
     with pytest.raises(NotFound) as exc:
         lib.read_page(doc["id"], doc["pages"][0]["id"])
     assert exc.value.code == "file_missing"
+
+
+# --- scan ------------------------------------------------------------------------
+
+
+def test_scan_adopts_files_dropped_into_a_section_folder(lib, tmp_path):
+    section = lib.create_section("Alice", "user")
+    known = add_doc(lib, section, "Passport")
+    (tmp_path / "Alice" / "Blood test.PDF").write_bytes(PDF)
+    (tmp_path / "Alice" / ".hidden.jpg").write_bytes(JPEG)
+    (tmp_path / "Alice" / "empty.jpg").write_bytes(b"")
+    (tmp_path / "Alice" / "subfolder").mkdir()
+    os.utime(tmp_path / "Alice" / "Blood test.PDF", (0, 1_000_000_000))  # 2001-09-09 UTC
+
+    # Encrypted libraries have no section folders to scan.
+    lib.set_encrypted(True)
+    with pytest.raises(Conflict) as err:
+        lib.scan()
+    assert err.value.code == "scan_needs_plain"
+    lib.set_encrypted(False)
+
+    assert lib.scan() == {"sections": 0, "documents": 1}
+    docs = {d["title"]: d for d in lib.list_documents(section["id"])}
+    assert set(docs) == {"Passport", "Blood test"}
+    new = docs["Blood test"]
+    assert new["date"].startswith("2001-09-")
+    assert new["pages"][0]["path"] == "Alice/Blood test.PDF"
+    assert new["pages"][0]["mime"] == "application/pdf"
+    assert lib.read_page(new["id"], new["pages"][0]["id"])[1] == PDF
+    assert docs["Passport"]["id"] == known["id"]
+    assert tree(tmp_path) == ["Alice/.hidden.jpg", "Alice/Blood test.PDF", "Alice/Passport.jpg", "Alice/empty.jpg"]
+
+    assert lib.scan() == {"sections": 0, "documents": 0}
+
+
+def test_scan_creates_sections_from_new_folders(lib, tmp_path):
+    (tmp_path / "Rex").mkdir()
+    (tmp_path / "Rex" / "Vaccines.jpg").write_bytes(JPEG)
+    (tmp_path / "Empty").mkdir()
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / "loose.jpg").write_bytes(JPEG)
+
+    assert lib.scan() == {"sections": 2, "documents": 1}
+    sections = {s["name"]: s for s in lib.list_sections()}
+    assert set(sections) == {"Empty", "Rex"}
+    assert sections["Rex"]["icon"] == "folder" and sections["Rex"]["folder"] == "Rex"
+    assert sections["Rex"]["documents"] == 1
+
+    # The adopted section behaves like any other: renaming it moves its folder.
+    lib.update_section(sections["Rex"]["id"], "Rex the dog", "dog")
+    assert tree(tmp_path) == ["Rex the dog/Vaccines.jpg", "loose.jpg"]
+
+
+def test_scan_keeps_names_when_stems_clash(lib, key, tmp_path):
+    section = lib.create_section("S", "folder")
+    (tmp_path / "S" / "scan.jpg").write_bytes(JPEG)
+    (tmp_path / "S" / "scan.png").write_bytes(PNG)
+
+    assert lib.scan() == {"sections": 0, "documents": 2}
+    paths = sorted(p["path"] for d in lib.list_documents(section["id"]) for p in d["pages"])
+    assert paths == ["S/scan.jpg", "S/scan.png"]
+    assert tree(tmp_path) == ["S/scan.jpg", "S/scan.png"]
+
+    # Survives an encryption round trip and a restart with the same names.
+    lib.set_encrypted(True)
+    lib.set_encrypted(False)
+    assert tree(tmp_path) == ["S/scan.jpg", "S/scan.png"]
+    reopened = Library(tmp_path, key)
+    assert sorted(p["path"] for d in reopened.list_documents() for p in d["pages"]) == paths
