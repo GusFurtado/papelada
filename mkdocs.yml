@@ -1,0 +1,56 @@
+site_name: Papelada
+site_description: A self-hosted home for your household's paperwork.
+site_url: https://www.gustavofurtado.com/papelada/
+repo_url: https://github.com/GusFurtado/papelada
+repo_name: GusFurtado/papelada
+edit_uri: edit/main/docs/
+
+extra_css:
+  - assets/extra.css
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: blue
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: blue
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Your documents on disk: storage.md
+  - Encryption: encryption.md
+  - Security: security.md
+  - Development: development.md
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - tables
+  - toc:
+      permalink: true

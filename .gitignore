@@ -5,3 +5,6 @@ __pycache__/
 .env
 documents/
 data/
+
+# MkDocs build output
+site/

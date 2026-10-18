@@ -1,0 +1,8 @@
+/* Header background: the Papelada card from gustavofurtado.com. */
+.md-header {
+  background: #0c1016 url("https://www.gustavofurtado.com/assets/img/projects/papelada.svg") center / cover no-repeat;
+}
+
+.md-header[data-md-state="shadow"] {
+  box-shadow: 0 0 0.2rem rgba(0, 0, 0, 0.4), 0 0.2rem 0.4rem rgba(0, 0, 0, 0.5);
+}
