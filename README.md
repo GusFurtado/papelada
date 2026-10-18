@@ -1,66 +1,27 @@
-# Papelada
-
-A small self-hosted home for your household's paperwork: IDs, exam results,
-receipts, contracts, vaccination cards. Photograph a document with your phone (or
-upload any file), file it under a section you created, tag it, and find it again
-later.
-
-*Papelada* is Portuguese for "paperwork", or more precisely "a pile of papers".
-
-<p>
-  <img src="docs/screenshot-list.png" width="260" alt="Documents of one section, with tag filters">
-  <img src="docs/screenshot-document.png" width="260" alt="A document, with the path of its file in the volume">
-  <img src="docs/screenshot-section.png" width="260" alt="Editing a section: name and icon">
+<p align="center">
+  <a href="https://www.gustavofurtado.com/papelada/"><img src="https://www.gustavofurtado.com/assets/img/projects/papelada.png" alt="Papelada" width="640"></a>
 </p>
 
-- **Your own sections**, one per person, pet, car, house, or anything else, each with
-  an icon you pick. Reorder, rename and delete them any time.
-- **Tags** that work across sections (Health, Taxes, Travel...), to filter documents.
-- **Multi-page documents**: take one photo per page, straight from the phone camera,
-  or add PDFs and any other file.
-- **Crop** a photographed page, with the original kept so the crop can be undone.
-- **Plain files you can browse.** The documents volume is an ordinary folder tree with
-  readable names, so you can open, copy or back it up without the app.
-- **Optional encryption at rest**, switchable any time. The key never lives in the volume.
-- **Optional login** for one user, set with two environment variables.
-- **Scan** the volume to pick up files and folders you added by hand.
-- Six color themes, light and dark.
-- **Download** a selection of documents as a zip, laid out like the volume.
-- English and Brazilian Portuguese, picked from the browser's language.
-- One small container: Python (FastAPI) and a plain JS frontend, no database, no
-  build step, no third-party requests (fonts and libraries are bundled), except on the
-  API docs page at `/api/docs`, whose Swagger UI loads from a CDN.
+<p align="center">
+  <b>A self-hosted home for your household's paperwork.</b>
+</p>
 
-## Your documents on disk
+<p align="center">
+  <a href="https://github.com/GusFurtado/papelada/releases"><img src="https://img.shields.io/github/v/release/GusFurtado/papelada" alt="Release"></a>
+  <a href="https://github.com/GusFurtado/papelada/pkgs/container/papelada"><img src="https://img.shields.io/badge/image-ghcr.io-2496ED?logo=docker&logoColor=white" alt="Docker image"></a>
+  <a href="https://github.com/GusFurtado/papelada/actions/workflows/ci.yml"><img src="https://github.com/GusFurtado/papelada/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/GusFurtado/papelada/blob/main/LICENSE"><img src="https://img.shields.io/github/license/GusFurtado/papelada" alt="License"></a>
+</p>
 
-Every section is a folder named after it, and every document a file named after its
-title:
+<p align="center">
+  <b><a href="https://www.gustavofurtado.com/papelada/">Documentation</a></b>
+</p>
 
-```
-documents/
-├── Alice/
-│   ├── Passport.jpg
-│   ├── Blood test - 1.jpg      ← a document with two pages
-│   └── Blood test - 2.pdf
-├── Rex/
-│   └── Vaccination card.jpg
-└── .papelada/                  ← the app's own data (index, crop backups)
-```
+IDs, exam results, receipts, contracts, vaccination cards: photograph a document with your phone
+(or upload any file), file it under a section you created, tag it, and find it again later.
+*Papelada* is Portuguese for "paperwork", or more precisely "a pile of papers".
 
-Renaming a document or a section in the app renames its files or folder. Two
-documents with the same title in one section get `Title.jpg` and `Title (2).jpg`.
-Names are kept valid on Windows and macOS too, so the folder works over a network share.
-
-You're free to browse and copy anything in the volume and to add your own files to
-it: Papelada never overwrites them. It ignores them until you tap **Scan for new files**
-in the settings (the gear icon): every file in a section's folder it doesn't know
-becomes a document titled after the file, dated from the file, and every new folder
-at the top of the volume becomes a section. Scanning is unavailable while encryption is
-on. Don't rename
-or move the files Papelada created by hand, though. It keeps track of them by name,
-so do that from the app.
-
-## Running it
+## Installation
 
 You need Docker with Compose.
 
@@ -68,117 +29,18 @@ You need Docker with Compose.
 mkdir papelada && cd papelada
 curl -O https://raw.githubusercontent.com/GusFurtado/papelada/main/docker-compose.yml
 curl -o .env https://raw.githubusercontent.com/GusFurtado/papelada/main/.env.example
-mkdir documents          # or point DOCUMENTS_PATH in .env at an existing folder
+mkdir documents
 docker compose up -d
 ```
 
-Then open http://localhost:8080.
+Then open http://localhost:8080. The settings in `.env` are explained in the
+[installation guide](https://www.gustavofurtado.com/papelada/installation/).
 
-Create the documents folder yourself before starting. If Docker creates it, it
-belongs to root, and Papelada (which never runs as root) can't write to it.
+## Features
 
-`latest` is the newest release. To stay on one version, use its tag instead, e.g.
-`ghcr.io/gusfurtado/papelada:0.1.0`, or `:0.1` to also get its 0.1.x bug-fix releases.
-
-### Configuration
-
-Set these in `.env`, next to `docker-compose.yml`:
-
-| Variable         | Default       | What it does                                                                        |
-|------------------|---------------|-------------------------------------------------------------------------------------|
-| `DOCUMENTS_PATH` | `./documents` | Folder on the host where your documents are kept (the volume).                      |
-| `PORT`           | `8080`        | Port Papelada is served on.                                                         |
-| `PUID` / `PGID`  | `1000`        | User and group the app runs as, which own every file it writes. Use `id -u` / `id -g`. |
-| `ENCRYPTION_KEY` | *(empty)*     | Enables encryption. See below.                                                      |
-| `USERNAME`       | *(empty)*     | Login name. Together with `PASSWORD`, turns the login on. See [Security](#security). |
-| `PASSWORD`       | *(empty)*     | Login password.                                                                     |
-
-To use a Docker secret instead of an environment variable, set `ENCRYPTION_KEY_FILE`
-or `PASSWORD_FILE` to the secret's path inside the container.
-
-`docker compose` also reads variables from your shell, and they win over `.env`. If
-your shell exports a `USERNAME` of its own, Papelada will refuse to start (it has no
-`PASSWORD`) until you unset it or give it one.
-
-### Encryption
-
-By default, documents are plain files, which is what makes the volume browsable.
-That also means anyone who can read the volume, or its backups, can read your
-documents.
-
-To encrypt them, generate a key and add it to `.env`:
-
-```sh
-openssl rand -base64 32 | tr '+/' '-_'
-```
-
-Restart (`docker compose up -d`), then tap the lock icon in the app and choose
-**Encrypt everything**. Every file moves from the section folders into
-`.papelada/vault/` and is encrypted, along with the index of titles, tags and
-dates, so nothing readable is left in the volume. **Decrypt everything** puts it all
-back. Both take effect for existing and new documents, and an interrupted switch
-finishes by itself on the next start.
-
-**Keep a copy of the key somewhere safe, outside the documents folder.** Without it,
-encrypted documents can't be recovered, and Papelada refuses to start without the
-right key once the library is encrypted. Keeping the key out of the volume is the
-point: a backup of the volume alone doesn't contain it.
-
-### Security
-
-By default Papelada has no login: anyone who can reach it can see and change every
-document. Run it on your home network, or turn on the built-in login.
-
-To turn it on, set `USERNAME` and `PASSWORD` (or `PASSWORD_FILE`) and restart. Both
-or neither: with only one of them, Papelada refuses to start. Then:
-
-- Opening the app asks for the username and password, and every API route (including
-  `/api/docs`) rejects requests without a session. Only `/api/health`, which Docker's
-  health check uses, and the login itself are open.
-- A session is a cookie that lasts 14 days, and there is a sign-out button in the
-  header. Restarting Papelada signs everyone out.
-- After 5 wrong passwords from one address in 15 minutes, that address is locked out
-  for the rest of the window (and everyone is, after 50 in total). Behind a reverse
-  proxy, every request comes from the proxy's address, so wrong guesses lock out
-  everyone, you included, until the window passes.
-- There is one user, with no registration and no password reset. To change the
-  credentials, change the variables and restart. The password is never written to the
-  volume and has nothing to do with `ENCRYPTION_KEY`.
-
-The login stops other people on your network, but it's only as private as the
-connection: over plain `http://` the password and the documents travel in the clear.
-Outside your home network, serve Papelada over HTTPS (a reverse proxy, or a VPN such
-as Tailscale or WireGuard), and consider adding a second layer such as Cloudflare
-Access. The frontend only uses relative URLs, so it also works under a path prefix
-(e.g. `https://example.com/papelada/`, trailing slash included) behind a reverse proxy
-that strips that prefix.
-
-### Backups
-
-Back up the documents folder: it holds everything, including `.papelada/`. If you
-use encryption, back up the key separately.
-
-## Development
-
-```sh
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest
-DATA_DIR=./data .venv/bin/uvicorn app.main:create_app --factory --reload
-```
-
-The frontend is plain HTML, CSS and JS in `frontend/`, served as is. The API is
-documented at `/api/docs` while the app runs. `app/storage.py` explains the volume
-layout and the encryption switch in detail.
-
-## Credits
-
-Icons from [Lucide](https://lucide.dev) (ISC), image cropping by
-[Cropper.js](https://github.com/fengyuanchen/cropperjs) (MIT), and the
-[IBM Plex Sans](https://github.com/IBM/plex) and
-[Instrument Serif](https://github.com/Instrument/instrument-serif) fonts (SIL OFL).
-Their licenses are in `frontend/vendor/`.
-
-## License
-
-[MIT](LICENSE)
+- **Your own sections and tags**: one section per person, pet, car or house, and tags across them.
+- **Multi-page documents** straight from the phone camera, plus PDFs and any other file.
+- **Plain files you can browse**: the volume is an ordinary folder tree with readable names.
+- **Optional encryption at rest**, with the key kept out of the volume.
+- **Optional login** for one user, set with two environment variables.
+- One small container, no database, no third-party requests. English and Brazilian Portuguese.
