@@ -351,6 +351,8 @@
         thumb.appendChild(img);
       } else {
         thumb.innerHTML = icon('file-text');
+        // A scanned file can have an empty ext (see CLAUDE.md, Scan): icon only then.
+        if (first && first.ext) thumb.appendChild(el('span', 'thumb-ext', first.ext.slice(1).toUpperCase()));
       }
       if (doc.pages.length > 1) thumb.appendChild(el('span', 'page-badge', doc.pages.length));
       if (selectMode) {
