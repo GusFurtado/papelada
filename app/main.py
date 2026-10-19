@@ -4,6 +4,7 @@ Run with `uvicorn app.main:create_app --factory`. Configuration comes from the
 environment: DATA_DIR (default /data), ENCRYPTION_KEY or ENCRYPTION_KEY_FILE, and
 USERNAME with PASSWORD or PASSWORD_FILE to turn on the login (see auth.py)."""
 
+import mimetypes
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,8 +41,11 @@ def _content_disposition(kind: str, filename: str) -> str:
     return f"{kind}; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename)}"
 
 
-def _normalize_mime(mime: Optional[str]) -> str:
+def _normalize_mime(mime: Optional[str], filename: str = "") -> str:
+    """The upload's type, from the file name when the browser didn't know it."""
     mime = (mime or "").split(";")[0].strip().lower()
+    if mime in ("", "application/octet-stream"):
+        mime = mimetypes.guess_type(filename)[0] or ""
     return {"image/jpg": "image/jpeg", "": "application/octet-stream"}.get(mime, mime)
 
 
@@ -114,7 +118,9 @@ def logout(request: Request) -> JSONResponse:
 
 
 class SettingsUpdate(BaseModel):
-    encrypted: bool
+    encrypted: Optional[bool] = None
+    strip_metadata: Optional[bool] = None
+    reduce_uploads: Optional[bool] = None
 
 
 @router.get("/settings")
@@ -124,6 +130,9 @@ def get_settings(lib: Library = Depends(get_library)) -> dict:
 
 @router.put("/settings")
 def update_settings(body: SettingsUpdate, lib: Library = Depends(get_library)) -> dict:
+    lib.update_upload_settings(body.strip_metadata, body.reduce_uploads)
+    if body.encrypted is None:
+        return lib.settings()
     converted = lib.set_encrypted(body.encrypted)
     return {**lib.settings(), "converted": converted}
 
@@ -213,6 +222,22 @@ class DownloadRequest(BaseModel):
     ids: List[str]
 
 
+class CropBox(BaseModel):
+    x: float
+    y: float
+    w: float
+    h: float
+
+
+class PageEdits(BaseModel):
+    """See app/images.py: rotation and crop, filter, size and format."""
+    rotate: int = 0
+    crop: Optional[CropBox] = None
+    filter: Optional[str] = None
+    reduce: bool = False
+    format: Optional[str] = None
+
+
 @router.get("/documents")
 def list_documents(
     section: Optional[str] = None, tag: Optional[str] = None, lib: Library = Depends(get_library)
@@ -229,7 +254,9 @@ def create_document(
     files: List[UploadFile] = File(...),
     lib: Library = Depends(get_library),
 ) -> dict:
-    pages = [(file.filename or "", _normalize_mime(file.content_type), file.file.read()) for file in files]
+    pages = [
+        (file.filename or "", _normalize_mime(file.content_type, file.filename or ""), file.file.read()) for file in files
+    ]
     uploaded_at = datetime.now(timezone.utc).isoformat()
     return lib.create_document(section, title, date, tags, pages, uploaded_at)
 
@@ -268,9 +295,34 @@ def page_content(doc_id: str, page_id: str, download: bool = False, lib: Library
     return Response(content=content, media_type=media_type, headers=headers)
 
 
-@router.post("/documents/{doc_id}/pages/{page_id}/crop")
-def crop_page(doc_id: str, page_id: str, file: UploadFile = File(...), lib: Library = Depends(get_library)) -> dict:
-    return lib.crop_page(doc_id, page_id, file.file.read())
+@router.get("/documents/{doc_id}/pdf")
+def document_pdf(doc_id: str, lib: Library = Depends(get_library)) -> Response:
+    content, filename = lib.document_pdf(doc_id)
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": _content_disposition("attachment", filename), "Cache-Control": "no-cache"},
+    )
+
+
+# Derived images: the URLs carry the page's revision too, so they can be cached for good.
+_IMMUTABLE = {"Cache-Control": "private, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff"}
+
+
+@router.get("/documents/{doc_id}/pages/{page_id}/thumbnail")
+def page_thumbnail(doc_id: str, page_id: str, lib: Library = Depends(get_library)) -> Response:
+    return Response(content=lib.thumbnail(doc_id, page_id), media_type="image/webp", headers=_IMMUTABLE)
+
+
+@router.get("/documents/{doc_id}/pages/{page_id}/preview")
+def page_preview(doc_id: str, page_id: str, lib: Library = Depends(get_library)) -> Response:
+    content, mime = lib.edit_preview(doc_id, page_id)
+    return Response(content=content, media_type=mime, headers=_IMMUTABLE)
+
+
+@router.put("/documents/{doc_id}/pages/{page_id}/edits")
+def edit_page(doc_id: str, page_id: str, body: PageEdits, lib: Library = Depends(get_library)) -> dict:
+    return lib.edit_page(doc_id, page_id, body.model_dump())
 
 
 @router.post("/documents/{doc_id}/pages/{page_id}/restore")

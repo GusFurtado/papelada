@@ -5,8 +5,9 @@ Layout of the volume (DATA_DIR, `/data` in the container):
     <Section>/<Document title>.<ext>            a single-page document
     <Section>/<Document title> - 2.<ext>        page 2 of a multi-page one
     .papelada/index.json                        sections, tags, document metadata
-    .papelada/settings.json                     {"encrypted": bool}
-    .papelada/originals/<page id>.<ext>         pre-crop backup of a page
+    .papelada/settings.json                     encryption and upload preferences
+    .papelada/originals/<page id>.<ext>         an edited page as uploaded
+    .papelada/thumbs/<page id>-<rev>.webp       grid thumbnail cache (disposable)
     .papelada/vault/<page id>.enc               page content while encrypted
 
 Unencrypted, every page is an ordinary file with a human-readable name inside
@@ -36,13 +37,16 @@ from typing import Iterable, List, Optional, Tuple
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from . import images
+
 META_DIR_NAME = ".papelada"
 INDEX_FILE_NAME = "index.json"
 SETTINGS_FILE_NAME = "settings.json"
 VAULT_DIR_NAME = "vault"
 ORIGINALS_DIR_NAME = "originals"
+THUMBS_DIR_NAME = "thumbs"
 ENCRYPTED_SUFFIX = ".enc"
-INDEX_VERSION = 1
+INDEX_VERSION = 2
 
 MAX_SECTION_NAME = 60
 MAX_TAG_NAME = 40
@@ -147,8 +151,9 @@ def page_file_name(stem: str, index: int, count: int, ext: str) -> str:
 
 
 def extension_for(mime: str, filename: str) -> str:
-    """Extension a page is stored with. Fixed at upload (a crop keeps the mime),
-    so a page's file name can always be recomputed from its metadata."""
+    """Extension a page is stored with. Set at upload and changed only when an
+    edit converts the page, so a page's file name can always be recomputed
+    from its metadata."""
     if mime in MIME_EXTENSIONS:
         return MIME_EXTENSIONS[mime]
     suffix = Path(filename or "").suffix.lower()
@@ -202,6 +207,7 @@ class Library:
         self.meta_dir = self.root / META_DIR_NAME
         self.vault_dir = self.meta_dir / VAULT_DIR_NAME
         self.originals_dir = self.meta_dir / ORIGINALS_DIR_NAME
+        self.thumbs_dir = self.meta_dir / THUMBS_DIR_NAME
         self.settings_path = self.meta_dir / SETTINGS_FILE_NAME
         self.plain_index_path = self.meta_dir / INDEX_FILE_NAME
         self.encrypted_index_path = self.meta_dir / (INDEX_FILE_NAME + ENCRYPTED_SUFFIX)
@@ -211,13 +217,16 @@ class Library:
         try:
             self.vault_dir.mkdir(parents=True, exist_ok=True)
             self.originals_dir.mkdir(parents=True, exist_ok=True)
+            self.thumbs_dir.mkdir(parents=True, exist_ok=True)
         except PermissionError:
             raise PermissionError(
                 f"Can't write to {self.root}. The folder mounted there must be writable by the user "
                 f"the container runs as (uid {os.getuid()}, gid {os.getgid()}); see PUID/PGID in the README."
             )
-        settings =json.loads(self.settings_path.read_text()) if self.settings_path.exists() else {}
+        settings = json.loads(self.settings_path.read_text()) if self.settings_path.exists() else {}
         self.encrypted = bool(settings.get("encrypted", False))
+        self.strip_metadata = bool(settings.get("strip_metadata", True))
+        self.reduce_uploads = bool(settings.get("reduce_uploads", False))
         if self.encrypted and self.fernet is None:
             raise EncryptionKeyError("This library is encrypted, but ENCRYPTION_KEY is not set.")
 
@@ -252,8 +261,20 @@ class Library:
                     data = self.fernet.decrypt(data)
                 except InvalidToken:
                     raise EncryptionKeyError("ENCRYPTION_KEY doesn't match the key this library was encrypted with.")
-            return json.loads(data)
+            return self._migrate(json.loads(data))
         return {"version": INDEX_VERSION, "sections": [], "tags": [], "documents": {}}
+
+    @staticmethod
+    def _migrate(index: dict) -> dict:
+        """Brings an index written by an older version up to date."""
+        if index.get("version", 1) < 2:
+            # v1 only had crops, made in the browser: `cropped` pages have an
+            # original but no recipe, so their current file is all there is.
+            for doc in index["documents"].values():
+                for page in doc["pages"]:
+                    page["edited"] = page.pop("cropped", False)
+        index["version"] = INDEX_VERSION
+        return index
 
     def _save_index(self) -> None:
         data = json.dumps(self.index, indent=2, ensure_ascii=False).encode("utf-8")
@@ -315,11 +336,28 @@ class Library:
         return self.vault_dir / f"{page['id']}{ENCRYPTED_SUFFIX}", folder / self._file_names(doc)[i]
 
     def _original_paths(self, page: dict) -> Paths:
-        """Where the first crop keeps the page as uploaded, so it can be restored."""
+        """Where the first edit keeps the page as uploaded, so it can be restored
+        (with its own extension: an edit may have converted the page)."""
         return (
             self.originals_dir / f"{page['id']}{ENCRYPTED_SUFFIX}",
-            self.originals_dir / f"{page['id']}{page['ext']}",
+            self.originals_dir / f"{page['id']}{page.get('original_ext', page['ext'])}",
         )
+
+    def _thumb_paths(self, page: dict) -> Paths:
+        name = f"{page['id']}-{page['rev']}"
+        return self.thumbs_dir / f"{name}{ENCRYPTED_SUFFIX}", self.thumbs_dir / f"{name}.webp"
+
+    def _drop_thumbs(self, page: dict) -> None:
+        for path in self.thumbs_dir.glob(f"{page['id']}-*"):
+            path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _source_mime(page: dict) -> str:
+        """The mime of the page as uploaded, which is what edits start from."""
+        return page.get("original_mime", page["mime"])
+
+    def _editable(self, page: dict) -> bool:
+        return images.is_readable(self._source_mime(page))
 
     def _read(self, paths: Paths) -> Optional[bytes]:
         """Content in whichever form the file is in. Both forms only coexist
@@ -451,20 +489,27 @@ class Library:
             if candidate.casefold() not in taken:
                 return candidate
 
-    def _allocate_stem(self, section: dict, title: str, doc: dict, doc_id: Optional[str]) -> str:
+    def _allocate_stem(
+        self, section: dict, title: str, doc: dict, doc_id: Optional[str],
+        keep: Optional[str] = None, own: Optional[List[str]] = None,
+    ) -> str:
         """File name stem for `doc` in `section`: the title, or `Title (2)`, ...
         if another document there already uses it, or if any of its page files
-        would clash with another document's or with a file the app doesn't know."""
+        would clash with another document's or with a file the app doesn't know.
+        `keep` is tried first, so a stem that still fits isn't renamed. `own` are
+        the file names the document has on disk now (by default, the ones `doc`
+        computes to), which don't count as taken."""
         base = safe_name(title, "Document")
         stems, taken = set(), set()
         for other_id, other in self.index["documents"].items():
             if other_id != doc_id and other["section"] == section["id"]:
                 stems.add(other["stem"].casefold())
                 taken.update(name.casefold() for name in self._file_names(other))
-        own = self._file_names(doc) if doc_id and doc["section"] == section["id"] else []
+        if own is None:
+            own = self._file_names(doc) if doc_id and doc["section"] == section["id"] else []
         taken |= self._taken_on_disk(self.root / section["folder"], exclude=own)
-        for n in itertools.count(1):
-            stem = base if n == 1 else f"{base} ({n})"
+        candidates = (base if n == 1 else f"{base} ({n})" for n in itertools.count(1))
+        for stem in itertools.chain([keep] if keep else [], candidates):
             names = self._file_names({**doc, "stem": stem})
             if stem.casefold() not in stems and not any(name.casefold() in taken for name in names):
                 return stem
@@ -474,7 +519,7 @@ class Library:
     def _doc_out(self, doc_id: str, doc: dict) -> dict:
         folder = self._section(doc["section"])["folder"]
         pages = [
-            {**page, "path": f"{folder}/{name}"}
+            {**page, "path": f"{folder}/{name}", "editable": self._editable(page)}
             for page, name in zip(doc["pages"], self._file_names(doc))
         ]
         return {
@@ -498,20 +543,43 @@ class Library:
     # --- settings ----------------------------------------------------------
 
     def settings(self) -> dict:
-        return {"encrypted": self.encrypted, "encryption_available": self.fernet is not None}
+        return {
+            "encrypted": self.encrypted,
+            "encryption_available": self.fernet is not None,
+            "strip_metadata": self.strip_metadata,
+            "reduce_uploads": self.reduce_uploads,
+        }
+
+    def _save_settings(self) -> None:
+        data = {"encrypted": self.encrypted, "strip_metadata": self.strip_metadata, "reduce_uploads": self.reduce_uploads}
+        _atomic_write(self.settings_path, json.dumps(data).encode())
+
+    def update_upload_settings(self, strip_metadata: Optional[bool] = None, reduce_uploads: Optional[bool] = None) -> dict:
+        with self.lock:
+            if strip_metadata is not None:
+                self.strip_metadata = strip_metadata
+            if reduce_uploads is not None:
+                self.reduce_uploads = reduce_uploads
+            self._save_settings()
+            return self.settings()
 
     def set_encrypted(self, enabled: bool) -> int:
-        """Turns encryption on/off and converts every stored file (pre-crop
-        backups and the index included). Returns how many files were converted.
-        Safe to call again with the same value to finish an interrupted switch."""
+        """Turns encryption on/off and converts every stored file (backups of
+        edited pages and the index included). Returns how many files were
+        converted. Safe to call again with the same value to finish an
+        interrupted switch."""
         with self.lock:
             if enabled and self.fernet is None:
                 raise Invalid("encryption_unavailable")
             if not enabled and self.fernet is not None:
                 self._check_decryptable()
             self.encrypted = enabled
-            _atomic_write(self.settings_path, json.dumps({"encrypted": enabled}).encode())
+            self._save_settings()
             self._save_index()
+            # Thumbnails are just a cache: dropping them is simpler than
+            # converting them, and a plain one must never outlive encrypting.
+            for path in self.thumbs_dir.iterdir():
+                path.unlink(missing_ok=True)
             return self._converge()
 
     def scan(self) -> dict:
@@ -601,7 +669,7 @@ class Library:
                     "ext": ext,
                     "size": size,
                     "rev": 0,
-                    "cropped": False,
+                    "edited": False,
                 }],
             }
             stems.add(stem.casefold())
@@ -737,6 +805,10 @@ class Library:
                 raise Invalid("pages_required")
             if any(not content for _, _, content in pages):
                 raise Invalid("empty_file")
+            pages = [
+                (filename, mime, images.prepare_upload(content, mime, self.strip_metadata, self.reduce_uploads))
+                for filename, mime, content in pages
+            ]
 
             doc_id = uuid.uuid4().hex
             doc = {
@@ -753,7 +825,7 @@ class Library:
                         "ext": extension_for(mime, filename),
                         "size": len(content),
                         "rev": 0,
-                        "cropped": False,
+                        "edited": False,
                     }
                     for filename, mime, content in pages
                 ],
@@ -799,6 +871,7 @@ class Library:
             for i, page in enumerate(doc["pages"]):
                 self._remove(self._page_paths(doc, i))
                 self._remove(self._original_paths(page))
+                self._drop_thumbs(page)
             del self.index["documents"][doc_id]
             self._save_index()
 
@@ -812,44 +885,153 @@ class Library:
                 raise NotFound("file_missing")
             return dict(doc["pages"][i]), content, self._file_names(doc)[i]
 
-    def crop_page(self, doc_id: str, page_id: str, content: bytes) -> dict:
-        """Replaces a page with a cropped version. The first crop keeps the page
-        as uploaded (`originals/`) so it can be restored; later crops only
-        replace the current version, never that backup."""
+    # --- page edits ----------------------------------------------------------------
+
+    def _replace_page(self, doc_id: str, doc: dict, i: int, content: bytes, updated: dict) -> None:
+        """Writes `content` as page `i` and makes `updated` its metadata (size and
+        rev are filled in). A new extension renames the page's file, and if that
+        name is taken the document gets a new stem (all its pages move). Nothing
+        in `doc` changes until the files are in place. Saves the index."""
+        page = doc["pages"][i]
+        updated = {**updated, "size": len(content), "rev": page["rev"] + 1}
+        new = {**doc, "pages": [updated if j == i else p for j, p in enumerate(doc["pages"])]}
+        if updated["ext"] != page["ext"]:
+            new["stem"] = self._allocate_stem(
+                self._section(doc["section"]), doc["title"], new, doc_id, keep=doc["stem"], own=self._file_names(doc)
+            )
+        count = len(doc["pages"])
+        old_paths = [self._page_paths(doc, j) for j in range(count)]
+        new_paths = [self._page_paths(new, j) for j in range(count)]
+        if not self.encrypted:
+            self._move([(old_paths[j][1], new_paths[j][1]) for j in range(count) if j != i])
+        self._write(new_paths[i], content)
+        doc["stem"] = new["stem"]
+        doc["pages"][i] = updated
+        self._save_index()
+        self._drop_thumbs(page)
+        # Encrypted, the plain path is no file of ours: leave whatever is there alone.
+        if not self.encrypted and old_paths[i][1] != new_paths[i][1]:
+            old_paths[i][1].unlink(missing_ok=True)
+
+    def _edit_source(self, doc: dict, i: int) -> bytes:
+        """The page as uploaded: its backup if it was edited, else the page itself."""
+        content = self._read(self._original_paths(doc["pages"][i])) or self._read(self._page_paths(doc, i))
+        if content is None:
+            raise NotFound("file_missing")
+        return content
+
+    def edit_page(self, doc_id: str, page_id: str, edits: dict) -> dict:
+        """Applies `edits` (see images.py) to the page as uploaded. The first edit
+        keeps that upload in `originals/`; later ones start from it again, so
+        quality doesn't drop with each edit. No edits at all is a restore."""
         with self.lock:
             doc = self._doc(doc_id)
             i = self._page_index(doc, page_id)
             page = doc["pages"][i]
-            if not page["mime"].startswith("image/"):
+            if not self._editable(page):
                 raise Invalid("not_an_image")
-            if not content:
-                raise Invalid("empty_file")
-            paths = self._page_paths(doc, i)
-            current = self._read(paths)
-            if current is None:
-                raise NotFound("file_missing")
+            try:
+                edits = images.check_edits(edits)
+            except ValueError:
+                raise Invalid("invalid_edits")
+            if not edits:
+                return self.restore_page(doc_id, page_id) if page["edited"] else self._doc_out(doc_id, doc)["pages"][i]
+
+            source = self._edit_source(doc, i)
+            source_mime, source_ext = self._source_mime(page), page.get("original_ext", page["ext"])
+            try:
+                content, mime = images.render(source, source_mime, edits)
+            except images.ImageError:
+                raise Invalid("unreadable_image")
             if not self._exists(self._original_paths(page)):
-                self._write(self._original_paths(page), current)
-            self._write(paths, content)
-            page.update(size=len(content), cropped=True, rev=page["rev"] + 1)
-            self._save_index()
+                self._write(self._original_paths(page), source)
+            self._replace_page(doc_id, doc, i, content, {
+                **page,
+                "mime": mime,
+                "ext": source_ext if mime == source_mime else extension_for(mime, ""),
+                "original_mime": source_mime,
+                "original_ext": source_ext,
+                "edits": edits,
+                "edited": True,
+            })
             return self._doc_out(doc_id, doc)["pages"][i]
 
     def restore_page(self, doc_id: str, page_id: str) -> dict:
         """Puts back the page as uploaded and drops the backup, so the page is
-        back to never having been cropped."""
+        back to never having been edited."""
         with self.lock:
             doc = self._doc(doc_id)
             i = self._page_index(doc, page_id)
             page = doc["pages"][i]
-            original = self._read(self._original_paths(page))
+            original_paths = self._original_paths(page)
+            original = self._read(original_paths)
             if original is None:
                 raise NotFound("no_original")
-            self._write(self._page_paths(doc, i), original)
-            self._remove(self._original_paths(page))
-            page.update(size=len(original), cropped=False, rev=page["rev"] + 1)
-            self._save_index()
+            updated = {key: value for key, value in page.items() if key not in ("edits", "original_mime", "original_ext")}
+            updated.update(mime=self._source_mime(page), ext=page.get("original_ext", page["ext"]), edited=False)
+            self._replace_page(doc_id, doc, i, original, updated)
+            self._remove(original_paths)
             return self._doc_out(doc_id, doc)["pages"][i]
+
+    def edit_preview(self, doc_id: str, page_id: str) -> Tuple[bytes, str]:
+        """The page as uploaded, upright and scaled down, for the editor to draw on."""
+        with self.lock:
+            doc = self._doc(doc_id)
+            i = self._page_index(doc, page_id)
+            if not self._editable(doc["pages"][i]):
+                raise Invalid("not_an_image")
+            source = self._edit_source(doc, i)
+        try:
+            return images.preview(source)
+        except images.ImageError:
+            raise Invalid("unreadable_image")
+
+    def thumbnail(self, doc_id: str, page_id: str) -> bytes:
+        """A small WebP of the page as it is now, cached per revision. Rendered
+        outside the lock, so a grid full of new thumbnails doesn't hold up
+        everything else."""
+        with self.lock:
+            doc = self._doc(doc_id)
+            i = self._page_index(doc, page_id)
+            page = dict(doc["pages"][i])
+            if not self._editable(page):
+                raise NotFound("no_thumbnail")
+            cached = self._read(self._thumb_paths(page))
+            if cached is not None:
+                return cached
+            # Pages edited before recipes existed (v1 crops) have none to replay.
+            if page.get("edits"):
+                source, edits = self._edit_source(doc, i), page["edits"]
+            else:
+                source, edits = self._read(self._page_paths(doc, i)), {}
+            if source is None:
+                raise NotFound("file_missing")
+        try:
+            thumb = images.thumbnail(source, edits)
+        except images.ImageError:
+            raise NotFound("no_thumbnail")
+        with self.lock:
+            current = self.index["documents"].get(doc_id)
+            if current and any(p["id"] == page_id and p["rev"] == page["rev"] for p in current["pages"]):
+                self._drop_thumbs(page)
+                self._write(self._thumb_paths(page), thumb)
+        return thumb
+
+    def document_pdf(self, doc_id: str) -> Tuple[bytes, str]:
+        """(content, file name) of the whole document as one PDF."""
+        with self.lock:
+            doc = self._doc(doc_id)
+            pages = []
+            for i, page in enumerate(doc["pages"]):
+                content = self._read(self._page_paths(doc, i))
+                if content is None:
+                    raise NotFound("file_missing")
+                pages.append((content, page["mime"]))
+            name = f"{doc['stem']}.pdf"
+        try:
+            return images.document_pdf(pages), name
+        except images.ImageError:
+            raise Invalid("not_exportable")
 
     def export_zip(self, doc_ids: List[str]) -> bytes:
         """A zip of the chosen documents laid out like the volume itself

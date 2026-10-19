@@ -37,9 +37,12 @@ What changed on purpose:
 
 - `index.json` is the source of truth. A document stores its `stem` (the file name
   without the page suffix); every page's path is *computed* from the section's
-  `folder`, the doc's `stem`, the page's position and its fixed `ext`. Never store
+  `folder`, the doc's `stem`, the page's position and its `ext`. Never store
   paths per page; recompute them.
-- A page's `ext` is fixed at upload, and crops keep the mime, so the name never drifts.
+- A page's `ext` is set at upload and changes only when an edit converts the page
+  (`_replace_page` renames the file, and moves the whole document to a new stem if
+  the new name is taken). The backup in `originals/` keeps the upload's own
+  `original_ext`/`original_mime`.
 - Name allocation (`_allocate_folder`, `_allocate_stem`) compares case-folded, so
   names don't clash on case-insensitive systems browsing over SMB. It also checks
   existing files on disk (plain mode) so it never overwrites a file the app didn't
@@ -78,6 +81,31 @@ What changed on purpose:
   in `<head>`, no flash) holds the list and the swatch colors. Overlays on photos use fixed
   white text, not `--ink`, so they work on light themes.
 
+## Page editing and Pillow (#8-#15)
+
+- **Edits are a recipe** (`page["edits"]`: `rotate`, `crop`, `filter`, `reduce`,
+  `format`; see `app/images.py`), always applied to the page as uploaded, never to the
+  previous result, so quality doesn't drop with each edit. The first edit copies the
+  upload to `originals/`; restore writes it back and drops the recipe. Pages cropped
+  before recipes existed (index v1, `cropped`) migrate to `edited: true` with no
+  recipe: their current file is the only record of that crop.
+- **The editor never crops in the browser.** It draws on `/preview` (the upload,
+  upright, at most 2048 px), rotates it on a canvas, and Cropper.js only draws the
+  box. The box is sent as fractions of the rotated image, so the preview's size
+  doesn't matter. Rotation comes before the crop, on both sides.
+- **Uploads** (`images.prepare_upload`): JPEG/PNG/WebP are turned upright by their
+  EXIF orientation, lose their metadata when `strip_metadata` (default on), and are
+  capped at 2000 px when `reduce_uploads` (default off, and then the full size is not
+  kept). A JPEG that only loses metadata is copied segment by segment, losslessly.
+- **Thumbnails** are a disposable cache in `.papelada/thumbs/<page id>-<rev>`,
+  encrypted like everything else; switching encryption just deletes them. They are
+  rendered outside `Library.lock`, so a grid of new thumbnails doesn't block writes.
+- `page["editable"]` (computed, not stored) means Pillow can open the upload. It
+  drives thumbnails, the editor and whether a document can become one PDF.
+- Pillow and pypdf are the only image/PDF dependencies, both prebuilt wheels: no
+  `apt-get` in the Dockerfile. HEIC would need `pillow-heif` (+26 MB, and the
+  licenses of the codecs its wheels bundle still need checking), so it's left out for now.
+
 ## Frontend conventions
 
 - ES5-style vanilla JS, no build step. Only relative URLs (`fetch('api/...')`), so
@@ -104,6 +132,7 @@ See `.github/workflows/docker.yml`.
 
 ## Testing
 
-`pytest` covers storage (naming, collisions, renames, tags, crop, every encryption
-path including interrupted switches and foreign files) and the API. For UI changes,
+`pytest` covers storage (naming, collisions, renames, tags, page edits and
+conversions, thumbnails, uploads, every encryption path including interrupted
+switches and foreign files) and the API. For UI changes,
 also drive it in a browser at phone width (390px): the main use is a phone camera.

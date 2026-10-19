@@ -108,19 +108,44 @@
   <div class="dialog-actions icon-actions">
     <button type="button" id="editDocumentBtn" data-i18n-title="edit"></button>
     <button type="button" id="deleteDocumentBtn" data-i18n-title="delete"></button>
+    <div class="menu-anchor">
+      <button type="button" id="downloadDocumentBtn" data-i18n-title="download" aria-haspopup="menu"></button>
+      <div class="menu" id="downloadMenu" role="menu" hidden>
+        <button type="button" id="downloadFilesBtn" role="menuitem"><span class="btn-icon"></span><span id="downloadFilesLabel"></span></button>
+        <button type="button" id="downloadPdfBtn" role="menuitem"><span class="btn-icon"></span><span data-i18n="downloadPdf"></span></button>
+      </div>
+    </div>
     <button type="button" id="closeViewBtn" data-i18n-title="close"></button>
   </div>
 </dialog>
 
-<dialog id="cropDialog">
-  <h2 data-i18n="cropImage"></h2>
-  <div class="crop-container">
-    <img id="cropImage" alt="">
+<dialog id="editorDialog">
+  <div class="editor-head">
+    <h2 id="editorTitle"></h2>
+    <div class="editor-nav" id="editorNav">
+      <button type="button" id="editorPrev" data-i18n-title="previousPage"></button>
+      <span id="editorPosition"></span>
+      <button type="button" id="editorNext" data-i18n-title="nextPage"></button>
+    </div>
   </div>
-  <div class="status" id="cropStatus"></div>
+  <div class="crop-container" id="editorStage">
+    <img id="editorImage" alt="">
+  </div>
+  <div class="editor-tools">
+    <button type="button" class="tool icon-only" id="rotateLeftBtn" data-i18n-title="rotateLeft"></button>
+    <button type="button" class="tool icon-only" id="rotateRightBtn" data-i18n-title="rotateRight"></button>
+    <button type="button" class="tool" id="scanFilterBtn" aria-pressed="false" data-i18n-title="scanFilterHelp"><span class="btn-icon"></span><span data-i18n="scanFilter"></span></button>
+    <button type="button" class="tool" id="reduceBtn" aria-pressed="false" data-i18n-title="reduceHelp"><span class="btn-icon"></span><span data-i18n="reduce"></span></button>
+    <label class="tool-select">
+      <span data-i18n="format"></span>
+      <select id="formatSelect"></select>
+    </label>
+  </div>
+  <div class="status" id="editorStatus"></div>
   <div class="dialog-actions">
-    <button type="button" id="cancelCrop" data-i18n="cancel"></button>
-    <button type="button" id="saveCrop" class="primary" data-i18n="saveCrop"></button>
+    <button type="button" id="restorePageBtn" class="start-link"><span class="btn-icon"></span><span data-i18n="restoreOriginal"></span></button>
+    <button type="button" id="cancelEditor" data-i18n="cancel"></button>
+    <button type="button" id="saveEditor" class="primary" data-i18n="save"></button>
   </div>
 </dialog>
 
@@ -155,6 +180,16 @@
   <h3 data-i18n="tags"></h3>
   <ul class="manage-list" id="manageTags"></ul>
   <button type="button" id="manageNewTag" class="add-row"><span class="btn-icon"></span><span data-i18n="newTag"></span></button>
+  <h3 data-i18n="uploads"></h3>
+  <label class="check-row">
+    <input type="checkbox" id="stripMetadataInput">
+    <span><span data-i18n="stripMetadata"></span><small data-i18n="stripMetadataHelp"></small></span>
+  </label>
+  <label class="check-row">
+    <input type="checkbox" id="reduceUploadsInput">
+    <span><span data-i18n="reduceUploads"></span><small data-i18n="reduceUploadsHelp"></small></span>
+  </label>
+  <div class="status" id="uploadSettingsStatus"></div>
   <div id="scanField">
     <h3 data-i18n="volume"></h3>
     <p class="hint" data-i18n="scanHelp"></p>

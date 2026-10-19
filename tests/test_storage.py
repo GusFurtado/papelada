@@ -6,6 +6,8 @@ import zipfile
 
 import pytest
 from cryptography.fernet import Fernet
+from PIL import Image
+from pypdf import PdfReader
 
 from app.storage import (
     Conflict,
@@ -17,7 +19,7 @@ from app.storage import (
     safe_name,
 )
 
-from .conftest import JPEG, PDF, PNG, add_doc, tree
+from .conftest import JPEG, PDF, PNG, add_doc, image, pdf, size_of, tree
 
 
 # --- naming ----------------------------------------------------------------------
@@ -227,44 +229,264 @@ def test_documents_are_listed_newest_first(lib):
     assert [d["title"] for d in lib.list_documents(section["id"])] == ["New", "Old"]
 
 
-# --- crop ----------------------------------------------------------------------------
+# --- page edits ----------------------------------------------------------------------
 
 
-def test_crop_keeps_the_original_once_and_restore_brings_it_back(lib, tmp_path):
-    section = lib.create_section("S", "folder")
-    doc = add_doc(lib, section, "ID")
-    page_id = doc["pages"][0]["id"]
-    original = tmp_path / ".papelada/originals" / f"{page_id}.jpg"
+def _photo_doc(lib, title="ID", content=None, section=None):
+    section = section or lib.create_section("S", "folder")
+    doc = add_doc(lib, section, title, pages=[("p.jpg", "image/jpeg", content or image((60, 40)))])
+    return section, doc, doc["pages"][0]["id"]
 
-    page = lib.crop_page(doc["id"], page_id, b"crop 1")
-    assert page["cropped"] and page["rev"] == 1
-    lib.crop_page(doc["id"], page_id, b"crop 2")
-    assert (tmp_path / "S/ID.jpg").read_bytes() == b"crop 2"
-    assert original.read_bytes() == JPEG
+
+def test_edits_keep_the_upload_once_and_restore_brings_it_back(lib, tmp_path):
+    uploaded = image((60, 40))
+    _, doc, page_id = _photo_doc(lib, content=uploaded)
+    backup = tmp_path / ".papelada/originals" / f"{page_id}.jpg"
+
+    page = lib.edit_page(doc["id"], page_id, {"crop": {"x": 0, "y": 0, "w": 0.5, "h": 1}})
+    assert page["edited"] and page["rev"] == 1 and page["edits"] == {"crop": {"x": 0, "y": 0, "w": 0.5, "h": 1}}
+    assert size_of((tmp_path / "S/ID.jpg").read_bytes()) == (30, 40)
+    assert backup.read_bytes() == uploaded
+
+    # A new recipe starts again from the upload, not from the cropped page.
+    lib.edit_page(doc["id"], page_id, {"rotate": 90})
+    assert size_of((tmp_path / "S/ID.jpg").read_bytes()) == (40, 60)
+    assert backup.read_bytes() == uploaded
 
     page = lib.restore_page(doc["id"], page_id)
-    assert not page["cropped"] and page["rev"] == 3
-    assert (tmp_path / "S/ID.jpg").read_bytes() == JPEG
-    assert not original.exists()
+    assert not page["edited"] and "edits" not in page and page["rev"] == 3
+    assert (tmp_path / "S/ID.jpg").read_bytes() == uploaded
+    assert not backup.exists()
     with pytest.raises(NotFound):
         lib.restore_page(doc["id"], page_id)
 
 
-def test_only_images_can_be_cropped(lib):
+def test_rotation_comes_before_the_crop(lib, tmp_path):
+    _, doc, page_id = _photo_doc(lib, content=image((60, 40)))
+    lib.edit_page(doc["id"], page_id, {"rotate": 90, "crop": {"x": 0, "y": 0, "w": 1, "h": 0.5}})
+    assert size_of((tmp_path / "S/ID.jpg").read_bytes()) == (40, 30)
+
+
+def test_no_edits_is_a_restore(lib, tmp_path):
+    uploaded = image()
+    _, doc, page_id = _photo_doc(lib, content=uploaded)
+    assert lib.edit_page(doc["id"], page_id, {"rotate": 0, "crop": {"x": 0, "y": 0, "w": 1, "h": 1}})["rev"] == 0
+    lib.edit_page(doc["id"], page_id, {"filter": "scan"})
+    page = lib.edit_page(doc["id"], page_id, {})
+    assert not page["edited"]
+    assert (tmp_path / "S/ID.jpg").read_bytes() == uploaded
+
+
+def test_filter_and_reduce(lib, tmp_path):
+    _, doc, page_id = _photo_doc(lib, content=image((3000, 1500)))
+    lib.edit_page(doc["id"], page_id, {"filter": "scan", "reduce": True})
+    with Image.open(tmp_path / "S/ID.jpg") as im:
+        assert im.size == (2000, 1000)
+        assert im.mode == "L"
+
+
+def test_converting_renames_the_file_and_restore_renames_it_back(lib, tmp_path):
+    uploaded = image()
+    _, doc, page_id = _photo_doc(lib, content=uploaded)
+
+    page = lib.edit_page(doc["id"], page_id, {"format": "png"})
+    assert (page["mime"], page["ext"], page["path"]) == ("image/png", ".png", "S/ID.png")
+    assert tree(tmp_path) == ["S/ID.png"]
+    assert (tmp_path / "S/ID.png").read_bytes().startswith(b"\x89PNG")
+    assert (tmp_path / ".papelada/originals" / f"{page_id}.jpg").read_bytes() == uploaded
+
+    page = lib.edit_page(doc["id"], page_id, {"format": "pdf", "rotate": 180})
+    assert page["mime"] == "application/pdf" and page["editable"]
+    assert tree(tmp_path) == ["S/ID.pdf"]
+    assert (tmp_path / "S/ID.pdf").read_bytes().startswith(b"%PDF")
+
+    page = lib.restore_page(doc["id"], page_id)
+    assert (page["mime"], page["ext"]) == ("image/jpeg", ".jpg")
+    assert tree(tmp_path) == ["S/ID.jpg"]
+    assert (tmp_path / "S/ID.jpg").read_bytes() == uploaded
+
+
+def test_converting_never_overwrites_another_file(lib, tmp_path):
+    section = lib.create_section("S", "folder")
+    doc = add_doc(lib, section, "ID", pages=[("a.jpg", "image/jpeg", image()), ("b.jpg", "image/jpeg", image())])
+    (tmp_path / "S/ID - 1.png").write_bytes(b"mine")
+
+    lib.edit_page(doc["id"], doc["pages"][0]["id"], {"format": "png"})
+    # The whole document moves to a stem whose names are all free.
+    assert tree(tmp_path) == ["S/ID (2) - 1.png", "S/ID (2) - 2.jpg", "S/ID - 1.png"]
+    assert (tmp_path / "S/ID - 1.png").read_bytes() == b"mine"
+
+
+def test_only_images_can_be_edited(lib):
     section = lib.create_section("S", "folder")
     doc = add_doc(lib, section, "Doc", pages=[("a.pdf", "application/pdf", PDF)])
-    with pytest.raises(Invalid):
-        lib.crop_page(doc["id"], doc["pages"][0]["id"], b"x")
+    assert not doc["pages"][0]["editable"]
+    with pytest.raises(Invalid) as exc:
+        lib.edit_page(doc["id"], doc["pages"][0]["id"], {"rotate": 90})
+    assert exc.value.code == "not_an_image"
+
+
+@pytest.mark.parametrize("edits", [
+    {"rotate": 45},
+    {"filter": "sepia"},
+    {"format": "bmp"},
+    {"crop": {"x": 1.5, "y": 0, "w": 0.5, "h": 0.5}},
+    {"crop": {"x": 0, "y": 0, "w": 0}},
+])
+def test_invalid_edits_are_rejected(lib, edits):
+    _, doc, page_id = _photo_doc(lib)
+    with pytest.raises(Invalid) as exc:
+        lib.edit_page(doc["id"], page_id, edits)
+    assert exc.value.code == "invalid_edits"
+
+
+def test_an_unreadable_image_cant_be_edited(lib):
+    _, doc, page_id = _photo_doc(lib, content=JPEG)
+    with pytest.raises(Invalid) as exc:
+        lib.edit_page(doc["id"], page_id, {"rotate": 90})
+    assert exc.value.code == "unreadable_image"
 
 
 def test_deleting_a_document_removes_its_files_and_backups(lib, tmp_path):
-    section = lib.create_section("S", "folder")
-    doc = add_doc(lib, section, "Doc")
-    lib.crop_page(doc["id"], doc["pages"][0]["id"], b"cropped")
+    _, doc, page_id = _photo_doc(lib)
+    lib.edit_page(doc["id"], page_id, {"rotate": 90})
+    lib.thumbnail(doc["id"], page_id)
     lib.delete_document(doc["id"])
     assert tree(tmp_path) == []
     assert list((tmp_path / ".papelada/originals").iterdir()) == []
+    assert list((tmp_path / ".papelada/thumbs").iterdir()) == []
     assert (tmp_path / "S").is_dir()
+
+
+def test_v1_crops_become_edited_pages(lib, tmp_path, key):
+    """A v1 index has `cropped` instead of `edited`, and no recipe."""
+    _, doc, page_id = _photo_doc(lib)
+    index = json.loads((tmp_path / ".papelada/index.json").read_text())
+    index["version"] = 1
+    page = index["documents"][doc["id"]]["pages"][0]
+    del page["edited"]
+    page["cropped"] = True
+    (tmp_path / ".papelada/index.json").write_text(json.dumps(index))
+    (tmp_path / ".papelada/originals" / f"{page_id}.jpg").write_bytes(image((80, 80)))
+
+    reopened = Library(tmp_path, key)
+    page = reopened.list_documents()[0]["pages"][0]
+    assert page["edited"] and "cropped" not in page
+    assert size_of(reopened.thumbnail(doc["id"], page_id)) == (60, 40)  # the crop as it is, not the original
+    reopened.restore_page(doc["id"], page_id)
+    assert size_of((tmp_path / "S/ID.jpg").read_bytes()) == (80, 80)
+
+
+# --- thumbnails, previews and PDFs -------------------------------------------------------
+
+
+@pytest.mark.parametrize("encrypted", [False, True])
+def test_thumbnails_follow_the_edits_and_are_cached_per_revision(lib, tmp_path, encrypted):
+    lib.set_encrypted(encrypted)
+    _, doc, page_id = _photo_doc(lib, content=image((1200, 800)))
+    thumbs = tmp_path / ".papelada/thumbs"
+
+    thumb = lib.thumbnail(doc["id"], page_id)
+    assert size_of(thumb) == (400, 267)
+    assert [p.name for p in thumbs.iterdir()] == [f"{page_id}-0" + (".enc" if encrypted else ".webp")]
+    assert lib.thumbnail(doc["id"], page_id) == thumb
+
+    lib.edit_page(doc["id"], page_id, {"rotate": 90, "format": "pdf"})
+    assert list(thumbs.iterdir()) == []
+    assert size_of(lib.thumbnail(doc["id"], page_id)) == (267, 400)
+    assert [p.name.split(".")[0] for p in thumbs.iterdir()] == [f"{page_id}-1"]
+
+
+def test_switching_encryption_drops_the_thumbnails(lib, tmp_path):
+    _, doc, page_id = _photo_doc(lib)
+    lib.thumbnail(doc["id"], page_id)
+    lib.set_encrypted(True)
+    assert list((tmp_path / ".papelada/thumbs").iterdir()) == []
+
+
+def test_only_images_have_thumbnails(lib):
+    section = lib.create_section("S", "folder")
+    doc = add_doc(lib, section, "Doc", pages=[("a.pdf", "application/pdf", PDF)])
+    with pytest.raises(NotFound):
+        lib.thumbnail(doc["id"], doc["pages"][0]["id"])
+
+
+def test_the_editor_preview_is_the_upload_scaled_down(lib):
+    _, doc, page_id = _photo_doc(lib, content=image((4000, 3000)))
+    lib.edit_page(doc["id"], page_id, {"crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.5}})
+    content, mime = lib.edit_preview(doc["id"], page_id)
+    assert mime == "image/jpeg"
+    assert size_of(content) == (2048, 1536)
+
+
+def test_document_pdf_merges_pdfs_and_images(lib):
+    section = lib.create_section("S", "folder")
+    doc = add_doc(lib, section, "Exam", pages=[
+        ("a.jpg", "image/jpeg", image()), ("b.pdf", "application/pdf", pdf(pages=2)), ("c.png", "image/png", image(fmt="PNG")),
+    ])
+    content, name = lib.document_pdf(doc["id"])
+    assert name == "Exam.pdf"
+    assert len(PdfReader(io.BytesIO(content)).pages) == 4
+
+    other = add_doc(lib, section, "Notes", pages=[("n.txt", "text/plain", b"hello")])
+    with pytest.raises(Invalid) as exc:
+        lib.document_pdf(other["id"])
+    assert exc.value.code == "not_exportable"
+
+
+# --- uploads -------------------------------------------------------------------------------
+
+
+GPS, MAKE, ORIENTATION = 0x8825, 0x010F, 0x0112
+
+
+def _uploaded(lib, tmp_path, content, mime="image/jpeg", name="p.jpg"):
+    section = lib.create_section("S", "folder")
+    doc = add_doc(lib, section, "P", pages=[(name, mime, content)])
+    return (tmp_path / doc["pages"][0]["path"]).read_bytes()
+
+
+def _exif(content):
+    return dict(Image.open(io.BytesIO(content)).getexif())
+
+
+def test_uploads_lose_their_metadata_losslessly(lib, tmp_path):
+    uploaded = image(exif={MAKE: "Phone"})
+    stored = _uploaded(lib, tmp_path, uploaded)
+    assert _exif(stored) == {}
+    assert b"Phone" not in stored
+    # Same image data: only the metadata segment is gone.
+    assert stored.endswith(uploaded[uploaded.index(b"\xff\xdb"):])
+
+
+def test_uploads_are_turned_upright(lib, tmp_path):
+    stored = _uploaded(lib, tmp_path, image((60, 40), exif={ORIENTATION: 6, MAKE: "Phone"}))
+    assert size_of(stored) == (40, 60)
+    assert _exif(stored) == {}
+
+
+def test_metadata_can_be_kept(lib, tmp_path):
+    lib.update_upload_settings(strip_metadata=False)
+    uploaded = image(exif={MAKE: "Phone"})
+    assert _uploaded(lib, tmp_path, uploaded) == uploaded
+
+
+def test_kept_metadata_survives_turning_upright(lib, tmp_path):
+    lib.update_upload_settings(strip_metadata=False)
+    stored = _uploaded(lib, tmp_path, image((60, 40), exif={ORIENTATION: 6, MAKE: "Phone"}))
+    assert size_of(stored) == (40, 60)
+    assert _exif(stored) == {MAKE: "Phone"}
+
+
+def test_big_uploads_can_be_reduced(lib, tmp_path, key):
+    assert lib.settings()["reduce_uploads"] is False
+    lib.update_upload_settings(reduce_uploads=True)
+    assert Library(tmp_path, key).settings()["reduce_uploads"] is True
+    assert size_of(_uploaded(lib, tmp_path, image((3000, 1000), fmt="PNG"), "image/png", "p.png")) == (2000, 667)
+
+
+def test_other_files_are_uploaded_as_they_are(lib, tmp_path):
+    assert _uploaded(lib, tmp_path, JPEG) == JPEG
 
 
 # --- encryption ------------------------------------------------------------------------
@@ -280,8 +502,8 @@ def _populate(lib):
     tag = lib.create_tag("Health")
     add_doc(lib, alice, "Blood test", pages=[("a.jpg", "image/jpeg", JPEG), ("b.pdf", "application/pdf", PDF)],
             tags=[tag["id"]])
-    cropped = add_doc(lib, alice, "RG")
-    lib.crop_page(cropped["id"], cropped["pages"][0]["id"], b"cropped")
+    cropped = add_doc(lib, alice, "RG", pages=[("rg.jpg", "image/jpeg", image((60, 40)))])
+    cropped["pages"][0] = lib.edit_page(cropped["id"], cropped["pages"][0]["id"], {"crop": {"x": 0, "y": 0, "w": 0.5, "h": 1}})
     return alice, cropped
 
 
@@ -289,7 +511,7 @@ def test_encrypting_leaves_nothing_readable_in_the_volume(lib, tmp_path, key):
     alice, cropped = _populate(lib)
     before = tree(tmp_path)
 
-    assert lib.set_encrypted(True) == 4  # 3 pages + 1 pre-crop backup
+    assert lib.set_encrypted(True) == 4  # 3 pages + 1 backup of an edited page
     assert tree(tmp_path) == []
     assert not (tmp_path / "Alice").exists()
     assert not (tmp_path / ".papelada/index.json").exists()
@@ -298,16 +520,17 @@ def test_encrypting_leaves_nothing_readable_in_the_volume(lib, tmp_path, key):
     assert not any(b"Blood test" in p.read_bytes() or JPEG in p.read_bytes() for p in readable)
 
     # Still fully usable, and reopens with the same key.
-    assert lib.read_page(cropped["id"], cropped["pages"][0]["id"])[1] == b"cropped"
+    cropped_content = lib.read_page(cropped["id"], cropped["pages"][0]["id"])[1]
+    assert size_of(cropped_content) == (30, 40)
     reopened = Library(tmp_path, key)
-    assert reopened.settings() == {"encrypted": True, "encryption_available": True}
+    assert reopened.settings()["encrypted"] is True
     assert len(reopened.list_documents(alice["id"])) == 2
 
     assert reopened.set_encrypted(False) == 4
     assert tree(tmp_path) == before
-    assert (tmp_path / "Alice/RG.jpg").read_bytes() == b"cropped"
+    assert (tmp_path / "Alice/RG.jpg").read_bytes() == cropped_content
     reopened.restore_page(cropped["id"], cropped["pages"][0]["id"])
-    assert (tmp_path / "Alice/RG.jpg").read_bytes() == JPEG
+    assert size_of((tmp_path / "Alice/RG.jpg").read_bytes()) == (60, 40)
 
 
 def test_changes_made_while_encrypted_show_up_as_names_when_decrypted(lib, tmp_path):
@@ -325,7 +548,9 @@ def test_changes_made_while_encrypted_show_up_as_names_when_decrypted(lib, tmp_p
 
 def test_encryption_needs_a_key(tmp_path):
     lib = Library(tmp_path, None)
-    assert lib.settings() == {"encrypted": False, "encryption_available": False}
+    assert lib.settings() == {
+        "encrypted": False, "encryption_available": False, "strip_metadata": True, "reduce_uploads": False,
+    }
     with pytest.raises(Invalid):
         lib.set_encrypted(True)
 
@@ -391,7 +616,7 @@ def test_zip_export_mirrors_the_folder_layout(lib, encrypted):
     data = lib.export_zip([d["id"] for d in lib.list_documents()] + ["missing"])
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         assert sorted(zf.namelist()) == ["Alice/Blood test - 1.jpg", "Alice/Blood test - 2.pdf", "Alice/RG.jpg"]
-        assert zf.read("Alice/RG.jpg") == b"cropped"
+        assert size_of(zf.read("Alice/RG.jpg")) == (30, 40)
 
 
 def test_missing_file_is_reported(lib, tmp_path):

@@ -23,14 +23,19 @@ later.
 - **Tags** that work across sections (Health, Taxes, Travel...), to filter documents.
 - **Multi-page documents**: take one photo per page, straight from the phone camera,
   or add PDFs and any other file.
-- **Crop** a photographed page, with the original kept so the crop can be undone.
+- **Edit a photographed page**: crop, rotate, a "scanned" look (grayscale, more
+  contrast), a smaller size, or convert it to PNG or PDF. Every edit starts from the
+  page as uploaded, which is kept so the edits can be undone.
+- **Photos cleaned up on upload**: turned the right way up, and without the metadata
+  cameras record (GPS position, device). Large photos can be reduced too.
 - **Plain files you can browse.** The documents volume is an ordinary folder tree with
   readable names, so you can open, copy or back it up without the app.
 - **Optional encryption at rest**, switchable any time. The key never lives in the volume.
 - **Optional login** for one user, set with two environment variables.
 - **Scan** the volume to pick up files and folders you added by hand.
 - Six color themes, light and dark.
-- **Download** a selection of documents as a zip, laid out like the volume.
+- **Download** a document as one PDF, or a selection of documents as a zip, laid out
+  like the volume.
 - English and Brazilian Portuguese, picked from the browser's language.
 - One small container: Python (FastAPI) and a plain JS frontend, no database, no
   build step, no third-party requests (fonts and libraries are bundled), except on the
@@ -45,8 +50,10 @@ later.
 
 ## Credits
 
-Icons from [Lucide](https://lucide.dev) (ISC), image cropping by
-[Cropper.js](https://github.com/fengyuanchen/cropperjs) (MIT), and the
+Icons from [Lucide](https://lucide.dev) (ISC), the crop box by
+[Cropper.js](https://github.com/fengyuanchen/cropperjs) (MIT), image processing by
+[Pillow](https://python-pillow.org) (MIT-CMU), PDFs by
+[pypdf](https://github.com/py-pdf/pypdf) (BSD), and the
 [IBM Plex Sans](https://github.com/IBM/plex) and
 [Instrument Serif](https://github.com/Instrument/instrument-serif) fonts (SIL OFL).
 Their licenses are in [`frontend/vendor/`](https://github.com/GusFurtado/papelada/tree/main/frontend/vendor).
