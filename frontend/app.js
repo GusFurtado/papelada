@@ -55,9 +55,13 @@
   var viewDialog = $('viewDialog');
   var viewPages = $('viewPages');
 
-  var cropDialog = $('cropDialog');
-  var cropImage = $('cropImage');
-  var cropStatus = $('cropStatus');
+  var downloadMenu = $('downloadMenu');
+
+  var editorDialog = $('editorDialog');
+  var editorStage = $('editorStage');
+  var editorImage = $('editorImage');
+  var editorStatus = $('editorStatus');
+  var formatSelect = $('formatSelect');
 
   var sectionDialog = $('sectionDialog');
   var sectionNameInput = $('sectionNameInput');
@@ -98,6 +102,16 @@
   $('editDocumentBtn').innerHTML = icon('pencil');
   $('deleteDocumentBtn').innerHTML = icon('trash');
   $('closeViewBtn').innerHTML = icon('x');
+  $('downloadDocumentBtn').innerHTML = icon('download');
+  document.querySelector('#downloadFilesBtn .btn-icon').innerHTML = icon('file-archive');
+  document.querySelector('#downloadPdfBtn .btn-icon').innerHTML = icon('file-down');
+  $('editorPrev').innerHTML = icon('chevron-left');
+  $('editorNext').innerHTML = icon('chevron-right');
+  $('rotateLeftBtn').innerHTML = icon('rotate-ccw');
+  $('rotateRightBtn').innerHTML = icon('rotate-cw');
+  document.querySelector('#scanFilterBtn .btn-icon').innerHTML = icon('scan-line');
+  document.querySelector('#reduceBtn .btn-icon').innerHTML = icon('shrink');
+  document.querySelector('#restorePageBtn .btn-icon').innerHTML = icon('undo-2');
 
   // --- state ------------------------------------------------------------------
 
@@ -108,6 +122,7 @@
   var activeTagId = null;
   var encrypted = false;
   var encryptionAvailable = false;
+  var uploadSettings = { strip_metadata: true, reduce_uploads: false };
 
   var viewingDoc = null;
   var editingDoc = null;
@@ -117,7 +132,7 @@
   var selectMode = false;
   var selectedIds = [];
   var cropper = null;
-  var croppingPage = null;
+  var editor = null;  // the page editor's state while it's open; see openPageEditor
   var editingSection = null;
   var chosenIcon = 'folder';
   var nameDialogSave = null;
@@ -159,8 +174,21 @@
     return I18N.has(key) ? t(key, err.info) : t('errors.generic');
   }
 
+  function pageUrl(doc, page, what) {
+    return 'api/documents/' + doc.id + '/pages/' + page.id + '/' + what + '?v=' + page.rev;
+  }
+
   function contentUrl(doc, page) {
-    return 'api/documents/' + doc.id + '/pages/' + page.id + '/content?v=' + page.rev;
+    return pageUrl(doc, page, 'content');
+  }
+
+  // Server-side thumbnails exist for every page the editor can open (page.editable).
+  function thumbnailUrl(doc, page) {
+    return pageUrl(doc, page, 'thumbnail');
+  }
+
+  function extLabel(page) {
+    return (page.ext || '').slice(1).toUpperCase();
   }
 
   function todayIso() {
@@ -254,6 +282,7 @@
     return api('GET', 'api/settings').then(function (settings) {
       encrypted = settings.encrypted;
       encryptionAvailable = settings.encryption_available;
+      uploadSettings = { strip_metadata: settings.strip_metadata, reduce_uploads: settings.reduce_uploads };
       renderSecurity();
     });
   }
@@ -343,16 +372,16 @@
       var card = el('div', 'document-card');
       var thumb = el('div', 'thumb');
       var first = doc.pages[0];
-      if (first && isImage(first) && isPreviewable(first)) {
+      if (first && first.editable) {
         var img = el('img');
-        img.src = contentUrl(doc, first);
+        img.src = thumbnailUrl(doc, first);
         img.loading = 'lazy';
         img.alt = '';
         thumb.appendChild(img);
       } else {
         thumb.innerHTML = icon('file-text');
         // A scanned file can have an empty ext (see CLAUDE.md, Scan): icon only then.
-        if (first && first.ext) thumb.appendChild(el('span', 'thumb-ext', first.ext.slice(1).toUpperCase()));
+        if (first && first.ext) thumb.appendChild(el('span', 'thumb-ext', extLabel(first)));
       }
       if (doc.pages.length > 1) thumb.appendChild(el('span', 'page-badge', doc.pages.length));
       if (selectMode) {
@@ -416,24 +445,34 @@
     renderDocuments();
   });
 
-  $('downloadSelected').addEventListener('click', function () {
-    if (!selectedIds.length) return;
-    fetch('api/documents/download', {
+  // A GET download keeps the name the server gives it (Content-Disposition).
+  function saveUrl(url, name) {
+    var a = el('a');
+    a.href = url;
+    a.download = name || '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function downloadZip(ids) {
+    return fetch('api/documents/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: selectedIds })
+      body: JSON.stringify({ ids: ids })
     }).then(function (res) {
       if (!res.ok) throw new Error('download failed');
       return res.blob();
     }).then(function (blob) {
       var url = URL.createObjectURL(blob);
-      var a = el('a');
-      a.href = url;
-      a.download = 'papelada.zip';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      saveUrl(url, 'papelada.zip');
       URL.revokeObjectURL(url);
+    });
+  }
+
+  $('downloadSelected').addEventListener('click', function () {
+    if (!selectedIds.length) return;
+    downloadZip(selectedIds).then(function () {
       exitSelectMode();
       renderDocuments();
     });
@@ -456,6 +495,13 @@
     $('viewMeta').textContent = formatDate(doc.date) + (section ? ' · ' + section.name : '');
     renderTagChips($('viewTags'), doc.tags);
 
+    renderViewPages();
+    setDownloadMenu(false);
+    viewDialog.showModal();
+  }
+
+  function renderViewPages() {
+    var doc = viewingDoc;
     viewPages.innerHTML = '';
     doc.pages.forEach(function (page) {
       var url = contentUrl(doc, page);
@@ -469,6 +515,12 @@
         var frame = el('iframe');
         frame.src = url;
         figure.appendChild(frame);
+      } else if (page.editable) {
+        // An image the browser can't show (TIFF, BMP): the thumbnail stands in.
+        var thumb = el('img');
+        thumb.src = thumbnailUrl(doc, page);
+        thumb.alt = '';
+        figure.appendChild(thumb);
       } else {
         var none = el('div', 'no-preview');
         none.innerHTML = icon('file');
@@ -481,6 +533,16 @@
       var caption = el('figcaption');
       var name = el('span', 'file-path', encrypted ? page.path.split('/').pop() : page.path);
       caption.appendChild(name);
+      if (page.editable) {
+        var edit = iconButton('sliders-horizontal', t('editPage'), function () {
+          openPageEditor(doc, page, function () {
+            renderViewPages();
+            refresh();
+          });
+        });
+        edit.className = 'caption-button';
+        caption.appendChild(edit);
+      }
       if (isPreviewable(page)) {
         var open = el('a', null, t('openFile'));
         open.href = url;
@@ -497,12 +559,55 @@
       figure.appendChild(caption);
       viewPages.appendChild(figure);
     });
-    viewDialog.showModal();
   }
 
   closeOnBackdropClick(viewDialog);
 
   $('closeViewBtn').addEventListener('click', function () { viewDialog.close(); });
+
+  // --- document download: its files, or one PDF ------------------------------------------
+
+  // A single PDF needs every page to be an image or a PDF; for a document that
+  // already is one PDF file, it would just be that file again.
+  function canDownloadPdf(doc) {
+    var convertible = doc.pages.every(function (page) { return page.editable || page.mime === 'application/pdf'; });
+    return convertible && !(doc.pages.length === 1 && doc.pages[0].mime === 'application/pdf');
+  }
+
+  function downloadFiles(doc) {
+    if (doc.pages.length === 1) saveUrl(contentUrl(doc, doc.pages[0]) + '&download=1');
+    else downloadZip([doc.id]);
+  }
+
+  function setDownloadMenu(open) {
+    downloadMenu.hidden = !open;
+    $('downloadDocumentBtn').setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  $('downloadDocumentBtn').addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    var doc = viewingDoc;
+    if (!canDownloadPdf(doc)) {
+      downloadFiles(doc);
+      return;
+    }
+    $('downloadFilesLabel').textContent = t(doc.pages.length === 1 ? 'downloadFile' : 'downloadZip');
+    setDownloadMenu(downloadMenu.hidden);
+  });
+
+  $('downloadFilesBtn').addEventListener('click', function () {
+    setDownloadMenu(false);
+    downloadFiles(viewingDoc);
+  });
+
+  $('downloadPdfBtn').addEventListener('click', function () {
+    setDownloadMenu(false);
+    saveUrl('api/documents/' + viewingDoc.id + '/pdf');
+  });
+
+  viewDialog.addEventListener('click', function (ev) {
+    if (!downloadMenu.hidden && !downloadMenu.contains(ev.target)) setDownloadMenu(false);
+  });
 
   $('editDocumentBtn').addEventListener('click', function () {
     if (!viewingDoc) return;
@@ -589,9 +694,10 @@
     return item;
   }
 
-  function fileIconTile() {
+  function fileIconTile(label) {
     var box = el('div', 'page-preview-icon');
     box.innerHTML = icon('file-text');
+    if (label) box.appendChild(el('span', 'page-preview-name', label));
     return box;
   }
 
@@ -604,8 +710,7 @@
         content.src = URL.createObjectURL(file);
         content.alt = '';
       } else {
-        content = fileIconTile();
-        content.appendChild(el('span', 'page-preview-name', file.name));
+        content = fileIconTile(file.name);
       }
       pendingPagesEl.appendChild(previewTile(content, function () {
         pendingFiles.splice(index, 1);
@@ -614,24 +719,32 @@
     });
   }
 
+  // Image pages open the page editor; anything else just shows its type.
   function renderEditPages() {
     editPagesEl.innerHTML = '';
     editingDoc.pages.forEach(function (page) {
-      if (!(isImage(page) && isPreviewable(page))) {
-        editPagesEl.appendChild(previewTile(fileIconTile()));
+      if (!page.editable) {
+        editPagesEl.appendChild(previewTile(fileIconTile(extLabel(page))));
         return;
       }
+      var tile = el('button', 'page-preview-item editable');
+      tile.type = 'button';
+      tile.title = t('editPage');
+      tile.setAttribute('aria-label', t('editPage'));
       var img = el('img');
-      img.src = contentUrl(editingDoc, page);
+      img.src = thumbnailUrl(editingDoc, page);
       img.alt = '';
-      var item = previewTile(img);
-      var tools = el('div', 'page-tools');
-      tools.appendChild(iconButton('scissors', t('crop'), function () { openCropDialog(page); }));
-      if (page.cropped) {
-        tools.appendChild(iconButton('rotate-ccw', t('restoreOriginal'), function () { restorePage(page); }));
-      }
-      item.appendChild(tools);
-      editPagesEl.appendChild(item);
+      tile.appendChild(img);
+      var badge = el('span', 'page-edit-badge');
+      badge.innerHTML = icon('sliders-horizontal');
+      tile.appendChild(badge);
+      tile.addEventListener('click', function () {
+        openPageEditor(editingDoc, page, function () {
+          pagesChangedDuringEdit = true;
+          renderEditPages();
+        });
+      });
+      editPagesEl.appendChild(tile);
     });
   }
 
@@ -722,62 +835,265 @@
     });
   });
 
-  // --- crop ---------------------------------------------------------------------------
+  // --- page editor ------------------------------------------------------------------------
+  //
+  // Edits are a recipe the server applies to the page as uploaded (see
+  // app/images.py): rotation, a crop box, a filter, a size and a format. The
+  // editor draws on a scaled-down preview of that upload: rotation is done here
+  // on a canvas, Cropper.js only draws the box, and the box is sent as fractions
+  // of the rotated image, so the preview's size doesn't matter.
 
-  function updatePageInEditingDoc(updated) {
-    editingDoc.pages = editingDoc.pages.map(function (p) { return p.id === updated.id ? updated : p; });
-    pagesChangedDuringEdit = true;
-  }
-
-  function openCropDialog(page) {
-    croppingPage = page;
-    cropStatus.textContent = '';
-    cropDialog.showModal();
-    cropImage.onload = function () {
-      if (cropper) cropper.destroy();
-      cropper = new Cropper(cropImage, { viewMode: 1, autoCropArea: 1, background: false, movable: false, zoomable: false });
+  function openPageEditor(doc, page, onChange) {
+    editor = {
+      doc: doc,
+      pages: doc.pages.filter(function (p) { return p.editable; }),
+      onChange: onChange,
+      changed: false
     };
-    cropImage.src = contentUrl(editingDoc, page);
+    editorDialog.showModal();
+    loadEditorPage(indexOfPage(page.id));
   }
 
-  function closeCropDialog() {
+  function indexOfPage(pageId) {
+    for (var i = 0; i < editor.pages.length; i++) {
+      if (editor.pages[i].id === pageId) return i;
+    }
+    return 0;
+  }
+
+  function loadEditorPage(index) {
+    var page = editor.pages[index];
+    var edits = page.edits || {};
+    editor.index = index;
+    editor.page = page;
+    editor.rotate = edits.rotate || 0;
+    editor.crop = edits.crop || null;
+    editor.filter = edits.filter || null;
+    editor.reduce = !!edits.reduce;
+    editor.format = edits.format || '';
+    editor.saved = editorStateKey(editor.crop);
+    editor.preview = null;
+
+    $('editorTitle').textContent = editor.doc.title;
+    $('editorNav').hidden = editor.pages.length < 2;
+    $('editorPosition').textContent = t('pageOf', { n: index + 1, total: editor.pages.length });
+    $('editorPrev').disabled = index === 0;
+    $('editorNext').disabled = index === editor.pages.length - 1;
+    $('restorePageBtn').hidden = !page.edited;
+    editorStatus.textContent = '';
+    setEditorBusy(false);
+    renderFormatOptions(page);
+    renderEditorToggles();
+
+    destroyCropper();
+    var preview = new Image();
+    preview.onload = function () {
+      if (editor && editor.page === page) {
+        editor.preview = preview;
+        drawEditorImage();
+      }
+    };
+    preview.onerror = function () { editorStatus.textContent = t('errors.unreadable_image'); };
+    preview.src = pageUrl(editor.doc, page, 'preview');
+  }
+
+  function renderFormatOptions(page) {
+    var sourceExt = (page.original_ext || page.ext || '').slice(1).toUpperCase();
+    formatSelect.innerHTML = '';
+    [['', t('formatKeep', { ext: sourceExt || '?' })], ['png', 'PNG'], ['pdf', 'PDF']].forEach(function (option) {
+      if (option[0] === 'png' && sourceExt === 'PNG') return;  // keeping it already is PNG
+      var node = el('option', null, option[1]);
+      node.value = option[0];
+      formatSelect.appendChild(node);
+    });
+    formatSelect.value = editor.format;
+  }
+
+  function renderEditorToggles() {
+    $('scanFilterBtn').setAttribute('aria-pressed', editor.filter === 'scan' ? 'true' : 'false');
+    $('reduceBtn').setAttribute('aria-pressed', editor.reduce ? 'true' : 'false');
+    editorStage.classList.toggle('filter-scan', editor.filter === 'scan');
+  }
+
+  function destroyCropper() {
     if (cropper) {
       cropper.destroy();
       cropper = null;
     }
-    cropImage.onload = null;
-    cropImage.removeAttribute('src');
-    cropDialog.close();
+    if (editor) editor.ready = false;
+    editorImage.onload = null;
+    if (editorImage.src.indexOf('blob:') === 0) URL.revokeObjectURL(editorImage.src);
+    editorImage.removeAttribute('src');
   }
 
-  $('cancelCrop').addEventListener('click', closeCropDialog);
-
-  $('saveCrop').addEventListener('click', function () {
-    if (!cropper) return;
-    var canvas = cropper.getCroppedCanvas();
-    if (!canvas) return;
-    // Re-encode in the page's own format when the browser can, so its extension stays right.
-    var mime = ['image/png', 'image/webp'].indexOf(croppingPage.mime) !== -1 ? croppingPage.mime : 'image/jpeg';
-    cropStatus.textContent = t('saving');
+  // Draws the preview turned by editor.rotate and puts the crop box on it.
+  function drawEditorImage() {
+    var source = editor.preview;
+    var quarter = editor.rotate % 180 !== 0;
+    var canvas = el('canvas');
+    canvas.width = quarter ? source.naturalHeight : source.naturalWidth;
+    canvas.height = quarter ? source.naturalWidth : source.naturalHeight;
+    var ctx = canvas.getContext('2d');
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate(editor.rotate * Math.PI / 180);
+    ctx.drawImage(source, -source.naturalWidth / 2, -source.naturalHeight / 2);
+    var page = editor.page;
     canvas.toBlob(function (blob) {
-      var form = new FormData();
-      form.append('file', blob, 'crop');
-      api('POST', 'api/documents/' + editingDoc.id + '/pages/' + croppingPage.id + '/crop', form).then(function (page) {
-        updatePageInEditingDoc(page);
-        closeCropDialog();
-        renderEditPages();
-      }).catch(function (err) {
-        cropStatus.textContent = errorMessage(err);
-      });
-    }, mime, 0.92);
-  });
+      if (!editor || editor.page !== page) return;
+      destroyCropper();
+      editorImage.onload = function () {
+        cropper = new Cropper(editorImage, {
+          viewMode: 1, autoCropArea: 1, background: false, movable: false, zoomable: false,
+          rotatable: false, scalable: false, checkOrientation: false,
+          ready: function () {
+            if (editor.crop) cropper.setData(cropToData(editor.crop));
+            editor.ready = true;
+          }
+        });
+      };
+      editorImage.src = URL.createObjectURL(blob);
+    }, 'image/jpeg', 0.9);
+  }
 
-  function restorePage(page) {
-    api('POST', 'api/documents/' + editingDoc.id + '/pages/' + page.id + '/restore').then(function (updated) {
-      updatePageInEditingDoc(updated);
-      renderEditPages();
+  function cropToData(crop) {
+    var image = cropper.getImageData();
+    return {
+      x: crop.x * image.naturalWidth, y: crop.y * image.naturalHeight,
+      width: crop.w * image.naturalWidth, height: crop.h * image.naturalHeight
+    };
+  }
+
+  // The crop box as fractions of the (rotated) image, or null for the whole image.
+  function currentCrop() {
+    if (!cropper || !editor.ready) return editor.crop;
+    var data = cropper.getData();
+    var image = cropper.getImageData();
+    var crop = {
+      x: Math.max(0, data.x / image.naturalWidth), y: Math.max(0, data.y / image.naturalHeight),
+      w: Math.min(1, data.width / image.naturalWidth), h: Math.min(1, data.height / image.naturalHeight)
+    };
+    var whole = crop.x < 0.001 && crop.y < 0.001 && crop.w > 0.999 && crop.h > 0.999;
+    return whole ? null : crop;
+  }
+
+  // Rounded so that redrawing the same box doesn't count as a change.
+  function editorStateKey(crop) {
+    return JSON.stringify([
+      editor.rotate, editor.filter, editor.reduce, editor.format,
+      crop && [crop.x, crop.y, crop.w, crop.h].map(function (v) { return Math.round(v * 500); })
+    ]);
+  }
+
+  function editorDirty() {
+    return editorStateKey(currentCrop()) !== editor.saved;
+  }
+
+  // The box turns with the image, so a crop survives a rotation.
+  function rotateEditor(clockwise) {
+    var crop = currentCrop();
+    if (crop) {
+      crop = clockwise
+        ? { x: 1 - crop.y - crop.h, y: crop.x, w: crop.h, h: crop.w }
+        : { x: crop.y, y: 1 - crop.x - crop.w, w: crop.h, h: crop.w };
+    }
+    editor.crop = crop;
+    editor.rotate = (editor.rotate + (clockwise ? 90 : 270)) % 360;
+    if (editor.preview) drawEditorImage();
+  }
+
+  function setEditorBusy(busy) {
+    ['saveEditor', 'restorePageBtn', 'editorPrev', 'editorNext'].forEach(function (id) { $(id).disabled = busy; });
+    if (!busy && editor) {
+      $('editorPrev').disabled = editor.index === 0;
+      $('editorNext').disabled = editor.index === editor.pages.length - 1;
+    }
+  }
+
+  // Puts the page the server sent back into the document (and so the dialog below).
+  function editorPageUpdated(updated) {
+    editor.doc.pages = editor.doc.pages.map(function (p) { return p.id === updated.id ? updated : p; });
+    editor.pages[editor.index] = updated;
+    editor.changed = true;
+  }
+
+  function closePageEditor() {
+    var done = editor;
+    destroyCropper();
+    editorDialog.close();
+    editor = null;
+    if (done && done.changed && done.onChange) done.onChange();
+  }
+
+  function leaveEditorPage(then) {
+    if (!editorDirty()) {
+      then();
+      return;
+    }
+    confirmAction(t('discardChanges'), t('discard')).then(function (ok) {
+      if (ok) then();
     });
   }
+
+  $('rotateLeftBtn').addEventListener('click', function () { rotateEditor(false); });
+  $('rotateRightBtn').addEventListener('click', function () { rotateEditor(true); });
+
+  $('scanFilterBtn').addEventListener('click', function () {
+    editor.filter = editor.filter === 'scan' ? null : 'scan';
+    renderEditorToggles();
+  });
+
+  $('reduceBtn').addEventListener('click', function () {
+    editor.reduce = !editor.reduce;
+    renderEditorToggles();
+  });
+
+  formatSelect.addEventListener('change', function () { editor.format = formatSelect.value; });
+
+  $('editorPrev').addEventListener('click', function () {
+    leaveEditorPage(function () { loadEditorPage(editor.index - 1); });
+  });
+
+  $('editorNext').addEventListener('click', function () {
+    leaveEditorPage(function () { loadEditorPage(editor.index + 1); });
+  });
+
+  $('cancelEditor').addEventListener('click', closePageEditor);
+
+  // Esc closes the dialog without going through Cancel.
+  editorDialog.addEventListener('cancel', function (ev) {
+    ev.preventDefault();
+    closePageEditor();
+  });
+
+  $('saveEditor').addEventListener('click', function () {
+    var edits = {
+      rotate: editor.rotate,
+      crop: currentCrop(),
+      filter: editor.filter,
+      reduce: editor.reduce,
+      format: editor.format || null
+    };
+    setEditorBusy(true);
+    editorStatus.textContent = t('saving');
+    api('PUT', 'api/documents/' + editor.doc.id + '/pages/' + editor.page.id + '/edits', edits).then(function (page) {
+      editorPageUpdated(page);
+      closePageEditor();
+    }).catch(function (err) {
+      editorStatus.textContent = errorMessage(err);
+      setEditorBusy(false);
+    });
+  });
+
+  $('restorePageBtn').addEventListener('click', function () {
+    setEditorBusy(true);
+    api('POST', 'api/documents/' + editor.doc.id + '/pages/' + editor.page.id + '/restore').then(function (page) {
+      editorPageUpdated(page);
+      loadEditorPage(editor.index);
+    }).catch(function (err) {
+      editorStatus.textContent = errorMessage(err);
+      setEditorBusy(false);
+    });
+  });
 
   // --- sections ------------------------------------------------------------------------
 
@@ -902,6 +1218,8 @@
 
   function renderManage() {
     renderThemes();
+    $('stripMetadataInput').checked = uploadSettings.strip_metadata;
+    $('reduceUploadsInput').checked = uploadSettings.reduce_uploads;
     $('scanField').hidden = encrypted;
     var sectionList = $('manageSections');
     sectionList.innerHTML = '';
@@ -932,8 +1250,24 @@
     });
   }
 
+  [['stripMetadataInput', 'strip_metadata'], ['reduceUploadsInput', 'reduce_uploads']].forEach(function (pair) {
+    var input = $(pair[0]);
+    input.addEventListener('change', function () {
+      var body = {};
+      body[pair[1]] = input.checked;
+      $('uploadSettingsStatus').textContent = '';
+      api('PUT', 'api/settings', body).then(function (settings) {
+        uploadSettings = { strip_metadata: settings.strip_metadata, reduce_uploads: settings.reduce_uploads };
+      }).catch(function (err) {
+        input.checked = !input.checked;
+        $('uploadSettingsStatus').textContent = errorMessage(err);
+      });
+    });
+  });
+
   $('manageBtn').addEventListener('click', function () {
     $('scanStatus').textContent = '';
+    $('uploadSettingsStatus').textContent = '';
     renderManage();
     manageDialog.showModal();
   });

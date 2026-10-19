@@ -11,7 +11,7 @@ documents/
 │   └── Blood test - 2.pdf
 ├── Rex/
 │   └── Vaccination card.jpg
-└── .papelada/                  ← the app's own data (index, crop backups)
+└── .papelada/                  ← the app's own data (index, originals of edited pages, thumbnails)
 ```
 
 Renaming a document or a section in the app renames its files or folder. Two
@@ -25,6 +25,10 @@ becomes a document titled after the file, dated from the file, and every new fol
 at the top of the volume becomes a section. Scanning is unavailable while encryption is
 on. Don't rename or move the files Papelada created by hand, though. It keeps track of them by name,
 so do that from the app.
+
+Editing a page rewrites its file, and converting it changes the extension too
+(`Passport.jpg` becomes `Passport.png` or `Passport.pdf`). The page as uploaded is
+kept in `.papelada/originals/` until you restore it.
 
 ## Backups
 

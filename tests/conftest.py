@@ -1,13 +1,44 @@
+import io
 from pathlib import Path
 
 import pytest
 from cryptography.fernet import Fernet
+from PIL import Image
 
 from app.storage import META_DIR_NAME, Library
 
 JPEG = b"\xff\xd8\xff\xe0 not really a jpeg"
 PNG = b"\x89PNG not really a png"
 PDF = b"%PDF-1.4 not really a pdf"
+
+
+def image(size=(60, 40), fmt="JPEG", color=(200, 30, 30), exif=None) -> bytes:
+    """A real image (the constants above only look like one), optionally with
+    EXIF tags ({tag id: value})."""
+    im = Image.new("RGB", size, color)
+    options = {}
+    if exif:
+        tags = Image.Exif()
+        tags.update(exif)
+        options["exif"] = tags.tobytes()
+    buf = io.BytesIO()
+    im.save(buf, fmt, **options)
+    return buf.getvalue()
+
+
+def pdf(pages=1) -> bytes:
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(width=200, height=300)
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
+def size_of(content: bytes) -> tuple:
+    return Image.open(io.BytesIO(content)).size
 
 
 @pytest.fixture
