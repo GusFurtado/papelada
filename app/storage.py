@@ -198,6 +198,22 @@ def _check_date(value: str) -> str:
     return value
 
 
+def _check_expires(value: Optional[str]) -> Optional[str]:
+    """An optional expiry date: empty means the document doesn't expire."""
+    if not value:
+        return None
+    try:
+        return _check_date(value)
+    except Invalid:
+        raise Invalid("invalid_expiry")
+
+
+def fold(text: str) -> str:
+    """`text` for matching: case-folded and without accents ("Certidão" -> "certidao")."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
+
+
 class Library:
     """All state lives in `self.index`, written through to the volume on every
     change. One process owns the volume; `self.lock` serializes requests."""
@@ -527,6 +543,7 @@ class Library:
             "section": doc["section"],
             "title": doc["title"],
             "date": doc["date"],
+            "expires": doc.get("expires"),
             "tags": list(doc["tags"]),
             "uploaded_at": doc["uploaded_at"],
             "pages": pages,
@@ -775,13 +792,19 @@ class Library:
 
     # --- documents -----------------------------------------------------------
 
-    def list_documents(self, section_id: Optional[str] = None, tag_id: Optional[str] = None) -> list:
+    def list_documents(
+        self, section_id: Optional[str] = None, tag_id: Optional[str] = None, query: Optional[str] = None,
+    ) -> list:
+        """`query` keeps the documents whose title has every one of its words,
+        ignoring case and accents."""
+        words = fold(query or "").split()
         with self.lock:
             items = [
                 self._doc_out(doc_id, doc)
                 for doc_id, doc in self.index["documents"].items()
                 if (section_id is None or doc["section"] == section_id)
                 and (tag_id is None or tag_id in doc["tags"])
+                and all(word in fold(doc["title"]) for word in words)
             ]
         items.sort(key=lambda item: (item["date"], item["uploaded_at"]), reverse=True)
         return items
@@ -794,12 +817,14 @@ class Library:
         tag_ids: List[str],
         pages: List[Tuple[str, str, bytes]],
         uploaded_at: str,
+        expires: Optional[str] = None,
     ) -> dict:
         """pages: (original filename, mime, content) tuples, in order."""
         with self.lock:
             section = self._section(section_id)
             title = _clean_label(title, MAX_TITLE, "title_required")
             date = _check_date(date)
+            expires = _check_expires(expires)
             tags = self._check_tags(tag_ids)
             if not pages:
                 raise Invalid("pages_required")
@@ -815,6 +840,7 @@ class Library:
                 "section": section["id"],
                 "title": title,
                 "date": date,
+                "expires": expires,
                 "tags": tags,
                 "uploaded_at": uploaded_at,
                 "pages": [
@@ -845,13 +871,16 @@ class Library:
             self._save_index()
             return self._doc_out(doc_id, doc)
 
-    def update_document(self, doc_id: str, title: str, date: str, section_id: str, tag_ids: List[str]) -> dict:
+    def update_document(
+        self, doc_id: str, title: str, date: str, section_id: str, tag_ids: List[str], expires: Optional[str] = None,
+    ) -> dict:
         """A new title or section renames/moves the document's files to match."""
         with self.lock:
             doc = self._doc(doc_id)
             section = self._section(section_id)
             title = _clean_label(title, MAX_TITLE, "title_required")
             date = _check_date(date)
+            expires = _check_expires(expires)
             tags = self._check_tags(tag_ids)
 
             stem = self._allocate_stem(section, title, doc, doc_id)
@@ -861,7 +890,7 @@ class Library:
                     (self._page_paths(doc, i)[1], self._page_paths(moved, i)[1])
                     for i in range(len(doc["pages"]))
                 ])
-            doc.update(section=section["id"], stem=stem, title=title, date=date, tags=tags)
+            doc.update(section=section["id"], stem=stem, title=title, date=date, expires=expires, tags=tags)
             self._save_index()
             return self._doc_out(doc_id, doc)
 
@@ -1017,21 +1046,59 @@ class Library:
                 self._write(self._thumb_paths(page), thumb)
         return thumb
 
+    def _pdf_sources(self, doc: dict) -> List[Tuple[bytes, str]]:
+        """(content, mime) of each of the document's pages, for images.document_pdf."""
+        pages = []
+        for i, page in enumerate(doc["pages"]):
+            content = self._read(self._page_paths(doc, i))
+            if content is None:
+                raise NotFound("file_missing")
+            pages.append((content, page["mime"]))
+        return pages
+
+    @staticmethod
+    def _pdf(pages: List[Tuple[bytes, str]], title: Optional[str] = None) -> bytes:
+        try:
+            return images.document_pdf(pages)
+        except images.ImageError:
+            raise Invalid("not_exportable", **({"title": title} if title else {}))
+
     def document_pdf(self, doc_id: str) -> Tuple[bytes, str]:
         """(content, file name) of the whole document as one PDF."""
         with self.lock:
             doc = self._doc(doc_id)
-            pages = []
-            for i, page in enumerate(doc["pages"]):
-                content = self._read(self._page_paths(doc, i))
-                if content is None:
-                    raise NotFound("file_missing")
-                pages.append((content, page["mime"]))
+            pages = self._pdf_sources(doc)
             name = f"{doc['stem']}.pdf"
-        try:
-            return images.document_pdf(pages), name
-        except images.ImageError:
-            raise Invalid("not_exportable")
+        return self._pdf(pages), name
+
+    def export_pdfs(self, doc_ids: List[str], merge: bool) -> Tuple[bytes, str]:
+        """(content, file name) of the chosen documents as PDFs: with `merge`, all
+        of them in one PDF, in the order given; otherwise a zip with one PDF per
+        document, laid out like the volume (`Section/Title.pdf`). Unknown ids are
+        skipped, like in export_zip. Any page that can't go in a PDF fails the
+        whole export (`not_exportable`, with the document's `title`), checked by
+        type before any work is done."""
+        with self.lock:
+            docs = []
+            for doc_id in doc_ids:
+                doc = self.index["documents"].get(doc_id)
+                if doc is not None:
+                    folder = self._section(doc["section"])["folder"]
+                    docs.append((f"{folder}/{doc['stem']}.pdf", doc["title"], self._pdf_sources(doc)))
+        if not docs:
+            raise NotFound("document_not_found")
+        for _, title, pages in docs:
+            if not all(mime == "application/pdf" or images.is_readable(mime) for _, mime in pages):
+                raise Invalid("not_exportable", title=title)
+        pdfs = [(path, self._pdf(pages, title)) for path, title, pages in docs]
+        if merge:
+            name = pdfs[0][0].split("/")[-1] if len(pdfs) == 1 else "papelada.pdf"
+            return self._pdf([(content, "application/pdf") for _, content in pdfs]), name
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for path, content in pdfs:
+                zf.writestr(path, content)
+        return buf.getvalue(), "papelada.zip"
 
     def export_zip(self, doc_ids: List[str]) -> bytes:
         """A zip of the chosen documents laid out like the volume itself

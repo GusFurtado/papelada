@@ -229,6 +229,46 @@ def test_documents_are_listed_newest_first(lib):
     assert [d["title"] for d in lib.list_documents(section["id"])] == ["New", "Old"]
 
 
+def test_search_ignores_case_and_accents_and_needs_every_word(lib):
+    alice, bob = lib.create_section("Alice", "user"), lib.create_section("Bob", "user")
+    add_doc(lib, alice, "Certidão de Nascimento")
+    add_doc(lib, bob, "certidao de casamento")
+    add_doc(lib, bob, "Passaporte")
+
+    def titles(query, section=None):
+        return sorted(d["title"] for d in lib.list_documents(section and section["id"], query=query))
+
+    assert titles("CERTIDÃO") == ["Certidão de Nascimento", "certidao de casamento"]
+    assert titles("certidao", bob) == ["certidao de casamento"]
+    assert titles("nasc certid") == ["Certidão de Nascimento"]
+    assert titles("certidão passaporte") == []
+    assert len(titles("  ")) == 3
+
+
+def test_expiry_dates_are_optional(lib):
+    section = lib.create_section("S", "folder")
+    doc = add_doc(lib, section, "Passport")
+    assert doc["expires"] is None
+
+    doc = lib.create_document(section["id"], "CNH", "2026-01-02", [], [("a.jpg", "image/jpeg", JPEG)], "x", "2031-05-06")
+    assert doc["expires"] == "2031-05-06"
+    assert lib.update_document(doc["id"], "CNH", "2026-01-02", section["id"], [], "2032-01-01")["expires"] == "2032-01-01"
+    assert lib.update_document(doc["id"], "CNH", "2026-01-02", section["id"], [])["expires"] is None
+    with pytest.raises(Invalid) as exc:
+        lib.update_document(doc["id"], "CNH", "2026-01-02", section["id"], [], "06/05/2031")
+    assert exc.value.code == "invalid_expiry"
+
+
+def test_documents_from_before_expiry_dates_have_none(lib, tmp_path, key):
+    section = lib.create_section("S", "folder")
+    add_doc(lib, section, "Old")
+    index = json.loads((tmp_path / ".papelada/index.json").read_text())
+    for doc in index["documents"].values():
+        del doc["expires"]
+    (tmp_path / ".papelada/index.json").write_text(json.dumps(index))
+    assert [d["expires"] for d in Library(tmp_path, key).list_documents()] == [None]
+
+
 # --- page edits ----------------------------------------------------------------------
 
 
@@ -432,6 +472,35 @@ def test_document_pdf_merges_pdfs_and_images(lib):
     with pytest.raises(Invalid) as exc:
         lib.document_pdf(other["id"])
     assert exc.value.code == "not_exportable"
+
+
+def test_selected_documents_as_pdfs(lib):
+    alice, bob = lib.create_section("Alice", "user"), lib.create_section("Bob", "user")
+    exam = add_doc(lib, alice, "Exam", pages=[("a.jpg", "image/jpeg", image()), ("b.pdf", "application/pdf", pdf(pages=2))])
+    rg = add_doc(lib, bob, "RG", pages=[("r.png", "image/png", image((40, 80), fmt="PNG"))])
+
+    data, name = lib.export_pdfs([exam["id"], rg["id"], "missing"], merge=False)
+    assert name == "papelada.zip"
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        assert sorted(zf.namelist()) == ["Alice/Exam.pdf", "Bob/RG.pdf"]
+        assert len(PdfReader(io.BytesIO(zf.read("Alice/Exam.pdf"))).pages) == 3
+
+    data, name = lib.export_pdfs([rg["id"], exam["id"]], merge=True)
+    assert name == "papelada.pdf"
+    reader = PdfReader(io.BytesIO(data))
+    assert len(reader.pages) == 4
+    portrait = [page.mediabox.height > page.mediabox.width for page in reader.pages]
+    assert portrait == [True, False, True, True]  # RG, then the exam's photo and its PDF's 2 pages
+
+    assert lib.export_pdfs([rg["id"]], merge=True)[1] == "RG.pdf"
+
+    notes = add_doc(lib, bob, "Notes", pages=[("n.txt", "text/plain", b"hello")])
+    for merge in (False, True):
+        with pytest.raises(Invalid) as exc:
+            lib.export_pdfs([rg["id"], notes["id"]], merge=merge)
+        assert (exc.value.code, exc.value.info) == ("not_exportable", {"title": "Notes"})
+    with pytest.raises(NotFound):
+        lib.export_pdfs(["missing"], merge=True)
 
 
 # --- uploads -------------------------------------------------------------------------------

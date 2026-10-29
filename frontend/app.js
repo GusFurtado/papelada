@@ -30,6 +30,9 @@
   // --- elements ---------------------------------------------------------------
 
   var sectionTabs = $('sectionTabs');
+  var searchBar = $('searchBar');
+  var searchInput = $('searchInput');
+  var searchScope = $('searchScope');
   var tagFilter = $('tagFilter');
   var welcome = $('welcome');
   var emptyList = $('emptyList');
@@ -37,10 +40,12 @@
   var selectModeBtn = $('selectModeBtn');
   var selectionBar = $('selectionBar');
   var selectionCount = $('selectionCount');
+  var selectionMenu = $('selectionMenu');
 
   var documentDialog = $('documentDialog');
   var titleInput = $('titleInput');
   var dateInput = $('dateInput');
+  var expiresInput = $('expiresInput');
   var sectionSelect = $('sectionSelect');
   var formTags = $('formTags');
   var newTagInput = $('newTagInput');
@@ -93,6 +98,12 @@
   document.querySelector('#welcomeNewSection .btn-icon').innerHTML = icon('plus');
   document.querySelector('#cancelSelection .btn-icon').innerHTML = icon('x');
   document.querySelector('#downloadSelected .btn-icon').innerHTML = icon('download');
+  document.querySelector('#downloadSelectedFiles .btn-icon').innerHTML = icon('file-archive');
+  document.querySelector('#downloadSelectedPdfs .btn-icon').innerHTML = icon('files');
+  document.querySelector('#downloadSelectedPdf .btn-icon').innerHTML = icon('file-down');
+  document.querySelector('#searchBar .btn-icon').innerHTML = icon('search');
+  document.querySelector('#viewExpiry .btn-icon').innerHTML = icon('calendar-clock');
+  $('clearExpiresBtn').innerHTML = icon('x');
   document.querySelector('#takePhotoBtn .btn-icon').innerHTML = icon('camera');
   document.querySelector('#addFilesBtn .btn-icon').innerHTML = icon('file');
   document.querySelector('#manageNewSection .btn-icon').innerHTML = icon('plus');
@@ -120,6 +131,10 @@
   var documents = [];  // every document of the active section; the tag filter is applied when rendering
   var activeSectionId = null;
   var activeTagId = null;
+  var expiringOnly = false;
+  var searchQuery = '';
+  var searchAll = true;  // while searching: every section, or only the active one
+  var loadCount = 0;     // so a slow response can't overwrite a newer one
   var encrypted = false;
   var encryptionAvailable = false;
   var uploadSettings = { strip_metadata: true, reduce_uploads: false };
@@ -130,7 +145,8 @@
   var pendingFiles = [];
   var pagesChangedDuringEdit = false;
   var selectMode = false;
-  var selectedIds = [];
+  var selectedIds = [];  // in the order they were selected, which is the order of a merged PDF
+  var selectedDocs = {};  // by id: the selection outlives searches and filters
   var cropper = null;
   var editor = null;  // the page editor's state while it's open; see openPageEditor
   var editingSection = null;
@@ -138,6 +154,7 @@
   var nameDialogSave = null;
 
   var ACTIVE_SECTION_KEY = 'papelada.activeSection';
+  var EXPIRING_DAYS = 30;
 
   function remember(key, value) {
     try { localStorage.setItem(key, value); } catch (e) { /* storage unavailable: just don't remember */ }
@@ -159,13 +176,18 @@
     }
     return fetch(url, options).then(function (res) {
       if (res.ok) return res.json();
-      return res.json().catch(function () { return {}; }).then(function (data) {
-        if (res.status === 401 && data.detail === 'login_required') showLogin();
-        var err = new Error(typeof data.detail === 'string' ? data.detail : 'request failed');
-        err.code = typeof data.detail === 'string' ? data.detail : null;
-        err.info = data;
-        throw err;
-      });
+      return apiError(res);
+    });
+  }
+
+  // Rejects with the error code (and info) of a failed API response.
+  function apiError(res) {
+    return res.json().catch(function () { return {}; }).then(function (data) {
+      if (res.status === 401 && data.detail === 'login_required') showLogin();
+      var err = new Error(typeof data.detail === 'string' ? data.detail : 'request failed');
+      err.code = typeof data.detail === 'string' ? data.detail : null;
+      err.info = data;
+      throw err;
     });
   }
 
@@ -203,6 +225,28 @@
     var parts = (iso || '').split('-');
     if (parts.length !== 3) return iso || '';
     return dateFormat.format(new Date(+parts[0], +parts[1] - 1, +parts[2]));
+  }
+
+  // Days from today to the document's expiry date (negative once it's past), or null.
+  function daysUntilExpiry(doc) {
+    var parts = (doc.expires || '').split('-');
+    if (parts.length !== 3) return null;
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return Math.round((new Date(+parts[0], +parts[1] - 1, +parts[2]) - today) / 86400000);
+  }
+
+  // 'expired', 'soon' (within EXPIRING_DAYS, the day itself included) or null.
+  function expiryStatus(doc) {
+    var days = daysUntilExpiry(doc);
+    if (days === null || days > EXPIRING_DAYS) return null;
+    return days < 0 ? 'expired' : 'soon';
+  }
+
+  function expiryBadgeText(doc) {
+    var days = daysUntilExpiry(doc);
+    if (days < 0) return t('expired');
+    return days === 0 ? t('expiresToday') : t('expiresIn', { n: days });
   }
 
   function findById(list, id) {
@@ -266,13 +310,23 @@
     });
   }
 
+  function searching() {
+    return searchQuery.trim() !== '';
+  }
+
+  // The active section's documents, or the search results.
   function loadDocuments() {
+    var count = ++loadCount;
     if (!activeSectionId) {
       documents = [];
       renderDocuments();
       return Promise.resolve();
     }
-    return api('GET', 'api/documents?section=' + encodeURIComponent(activeSectionId)).then(function (list) {
+    var params = [];
+    if (searching()) params.push('q=' + encodeURIComponent(searchQuery.trim()));
+    if (!searching() || !searchAll) params.push('section=' + encodeURIComponent(activeSectionId));
+    return api('GET', 'api/documents?' + params.join('&')).then(function (list) {
+      if (count !== loadCount) return;
       documents = list;
       renderDocuments();
     });
@@ -298,12 +352,15 @@
   function setActiveSection(sectionId) {
     activeSectionId = sectionId;
     activeTagId = null;
+    expiringOnly = false;
     remember(ACTIVE_SECTION_KEY, sectionId);
     exitSelectMode();
   }
 
+  // While searching, picking a section narrows the search to it.
   function selectSection(sectionId) {
     setActiveSection(sectionId);
+    if (searching()) searchAll = false;
     renderSections();
     loadDocuments();
   }
@@ -313,10 +370,12 @@
     var hasSections = sections.length > 0;
     welcome.hidden = hasSections;
     sectionTabs.hidden = !hasSections;
+    searchBar.hidden = !hasSections;
     selectModeBtn.hidden = !hasSections;
+    var allSections = searching() && searchAll;
 
     sections.forEach(function (section) {
-      var tab = el('button', section.id === activeSectionId ? 'active' : '');
+      var tab = el('button', section.id === activeSectionId && !allSections ? 'active' : '');
       tab.type = 'button';
       tab.innerHTML = icon(section.icon);
       tab.appendChild(el('span', null, section.name));
@@ -329,7 +388,59 @@
 
     var activeTab = sectionTabs.querySelector('.active');
     if (activeTab && activeTab.scrollIntoView) activeTab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    renderSearchScope();
   }
+
+  // --- search ----------------------------------------------------------------------
+
+  function renderSearchScope() {
+    searchScope.innerHTML = '';
+    var section = findById(sections, activeSectionId);
+    searchScope.hidden = !searching() || !section;
+    if (searchScope.hidden) return;
+    [[true, null, t('allSections')], [false, section.icon, section.name]].forEach(function (option) {
+      var chip = el('button', searchAll === option[0] ? 'active' : '');
+      chip.type = 'button';
+      if (option[1]) chip.innerHTML = icon(option[1]);
+      chip.appendChild(el('span', null, option[2]));
+      chip.addEventListener('click', function () {
+        if (searchAll === option[0]) return;
+        searchAll = option[0];
+        renderSections();
+        loadDocuments();
+      });
+      searchScope.appendChild(chip);
+    });
+  }
+
+  // A new search starts across all sections.
+  function applySearch() {
+    if (searchInput.value.trim() === searchQuery.trim()) return;
+    if (!searching()) searchAll = true;
+    searchQuery = searchInput.value;
+    renderSections();
+    loadDocuments();
+  }
+
+  var searchTimer = null;
+
+  searchInput.addEventListener('input', function () {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(applySearch, 250);
+  });
+
+  searchInput.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter') {
+      clearTimeout(searchTimer);
+      applySearch();
+      searchInput.blur();  // closes the phone keyboard
+    } else if (ev.key === 'Escape' && searchInput.value) {
+      ev.preventDefault();
+      searchInput.value = '';
+      clearTimeout(searchTimer);
+      applySearch();
+    }
+  });
 
   function renderTagFilter() {
     tagFilter.innerHTML = '';
@@ -338,7 +449,24 @@
       doc.tags.forEach(function (tagId) { used[tagId] = true; });
     });
     var usedTags = tags.filter(function (tag) { return used[tag.id]; });
-    tagFilter.hidden = !usedTags.length;
+    var anyExpiring = documents.some(function (doc) { return expiryStatus(doc) !== null; });
+    // A filter with nothing left to match (after a search, an edit...) turns itself off.
+    if (activeTagId && !used[activeTagId]) activeTagId = null;
+    if (!anyExpiring) expiringOnly = false;
+    tagFilter.hidden = !usedTags.length && !anyExpiring;
+    if (tagFilter.hidden) return;
+
+    if (anyExpiring) {
+      var expiring = el('button', 'expiring-chip' + (expiringOnly ? ' active' : ''));
+      expiring.type = 'button';
+      expiring.innerHTML = icon('calendar-clock');
+      expiring.appendChild(el('span', null, t('expiring')));
+      expiring.addEventListener('click', function () {
+        expiringOnly = !expiringOnly;
+        renderDocuments();
+      });
+      tagFilter.appendChild(expiring);
+    }
     if (!usedTags.length) return;
 
     function addChip(tagId, label) {
@@ -346,7 +474,6 @@
       chip.type = 'button';
       chip.addEventListener('click', function () {
         activeTagId = activeTagId === tagId ? null : tagId;
-        exitSelectMode();
         renderDocuments();
       });
       tagFilter.appendChild(chip);
@@ -357,8 +484,9 @@
   }
 
   function visibleDocuments() {
-    if (!activeTagId) return documents;
-    return documents.filter(function (doc) { return doc.tags.indexOf(activeTagId) !== -1; });
+    return documents.filter(function (doc) {
+      return (!activeTagId || doc.tags.indexOf(activeTagId) !== -1) && (!expiringOnly || expiryStatus(doc) !== null);
+    });
   }
 
   function renderDocuments() {
@@ -366,7 +494,8 @@
     documentList.innerHTML = '';
     var docs = visibleDocuments();
     emptyList.hidden = !activeSectionId || docs.length > 0;
-    emptyList.textContent = activeTagId ? t('emptyTag') : t('emptySection');
+    emptyList.textContent = t(searching() ? 'noResults' : expiringOnly ? 'emptyExpiring' : activeTagId ? 'emptyTag' : 'emptySection');
+    var allSections = searching() && searchAll;
 
     docs.forEach(function (doc) {
       var card = el('div', 'document-card');
@@ -384,6 +513,8 @@
         if (first && first.ext) thumb.appendChild(el('span', 'thumb-ext', extLabel(first)));
       }
       if (doc.pages.length > 1) thumb.appendChild(el('span', 'page-badge', doc.pages.length));
+      var expiry = expiryStatus(doc);
+      if (expiry) thumb.appendChild(el('span', 'expiry-badge ' + expiry, expiryBadgeText(doc)));
       if (selectMode) {
         var checkbox = el('input', 'select-checkbox');
         checkbox.type = 'checkbox';
@@ -394,19 +525,22 @@
       }
       card.appendChild(thumb);
       card.appendChild(el('div', 'doc-title', doc.title));
-      card.appendChild(el('div', 'doc-meta', formatDate(doc.date)));
+      var section = allSections && findById(sections, doc.section);
+      card.appendChild(el('div', 'doc-meta', formatDate(doc.date) + (section ? ' · ' + section.name : '')));
       card.addEventListener('click', function () {
-        if (selectMode) toggleSelected(doc.id, card); else openView(doc);
+        if (selectMode) toggleSelected(doc, card); else openView(doc);
       });
       documentList.appendChild(card);
     });
   }
 
-  // --- selection + zip download ---------------------------------------------------
+  // --- selection + download: files or PDFs ---------------------------------------------
 
   function exitSelectMode() {
     selectMode = false;
     selectedIds = [];
+    selectedDocs = {};
+    setSelectionMenu(false);
     selectModeBtn.querySelector('.btn-label').textContent = t('select');
     selectModeBtn.title = t('select');
     selectionBar.hidden = true;
@@ -415,11 +549,18 @@
 
   function updateSelectionBar() {
     selectionCount.textContent = t('selectedCount', { n: selectedIds.length });
+    $('downloadSelected').disabled = !selectedIds.length;
   }
 
-  function toggleSelected(docId, card) {
-    var idx = selectedIds.indexOf(docId);
-    if (idx === -1) selectedIds.push(docId); else selectedIds.splice(idx, 1);
+  function toggleSelected(doc, card) {
+    var idx = selectedIds.indexOf(doc.id);
+    if (idx === -1) {
+      selectedIds.push(doc.id);
+      selectedDocs[doc.id] = doc;
+    } else {
+      selectedIds.splice(idx, 1);
+      delete selectedDocs[doc.id];
+    }
     card.classList.toggle('selected', idx === -1);
     card.querySelector('.select-checkbox').checked = idx === -1;
     updateSelectionBar();
@@ -455,27 +596,74 @@
     a.remove();
   }
 
-  function downloadZip(ids) {
-    return fetch('api/documents/download', {
+  // A POST download, saved under the name the server gives it.
+  function postDownload(url, body) {
+    return fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: ids })
+      body: JSON.stringify(body)
     }).then(function (res) {
-      if (!res.ok) throw new Error('download failed');
-      return res.blob();
-    }).then(function (blob) {
-      var url = URL.createObjectURL(blob);
-      saveUrl(url, 'papelada.zip');
-      URL.revokeObjectURL(url);
+      if (!res.ok) return apiError(res);
+      var match = /filename\*=UTF-8''([^;]+)/i.exec(res.headers.get('Content-Disposition') || '');
+      return res.blob().then(function (blob) {
+        var objectUrl = URL.createObjectURL(blob);
+        saveUrl(objectUrl, match ? decodeURIComponent(match[1]) : '');
+        URL.revokeObjectURL(objectUrl);
+      });
     });
   }
 
-  $('downloadSelected').addEventListener('click', function () {
-    if (!selectedIds.length) return;
-    downloadZip(selectedIds).then(function () {
+  function downloadZip(ids) {
+    return postDownload('api/documents/download', { ids: ids });
+  }
+
+  // PDFs need every page of every selected document to be an image or a PDF.
+  function setSelectionMenu(open) {
+    if (open) {
+      var docs = selectedIds.map(function (id) { return selectedDocs[id]; });
+      var convertible = docs.every(pdfConvertible);
+      $('downloadSelectedPdfs').hidden = docs.length < 2;
+      $('downloadSelectedPdfs').disabled = !convertible;
+      $('downloadSelectedPdf').disabled = !convertible;
+      $('pdfUnavailableNote').hidden = convertible;
+    }
+    selectionMenu.hidden = !open;
+    $('downloadSelected').setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  function downloadSelection(request) {
+    setSelectionMenu(false);
+    $('downloadSelected').disabled = true;
+    selectionCount.textContent = t('preparing');
+    request().then(function () {
       exitSelectMode();
       renderDocuments();
+    }).catch(function (err) {
+      selectionCount.textContent = errorMessage(err);
+    }).then(function () {
+      $('downloadSelected').disabled = !selectedIds.length;
     });
+  }
+
+  $('downloadSelected').addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    if (selectedIds.length) setSelectionMenu(selectionMenu.hidden);
+  });
+
+  $('downloadSelectedFiles').addEventListener('click', function () {
+    downloadSelection(function () { return downloadZip(selectedIds); });
+  });
+
+  $('downloadSelectedPdfs').addEventListener('click', function () {
+    downloadSelection(function () { return postDownload('api/documents/pdf', { ids: selectedIds, merge: false }); });
+  });
+
+  $('downloadSelectedPdf').addEventListener('click', function () {
+    downloadSelection(function () { return postDownload('api/documents/pdf', { ids: selectedIds, merge: true }); });
+  });
+
+  document.addEventListener('click', function (ev) {
+    if (!selectionMenu.hidden && !selectionMenu.contains(ev.target)) setSelectionMenu(false);
   });
 
   // --- view dialog -------------------------------------------------------------------
@@ -494,6 +682,11 @@
     $('viewTitle').textContent = doc.title;
     $('viewMeta').textContent = formatDate(doc.date) + (section ? ' · ' + section.name : '');
     renderTagChips($('viewTags'), doc.tags);
+    var expiry = $('viewExpiry');
+    expiry.hidden = !doc.expires;
+    expiry.className = 'view-expiry ' + (expiryStatus(doc) || '');
+    $('viewExpiryText').textContent = doc.expires
+      ? t(daysUntilExpiry(doc) < 0 ? 'expiredOn' : 'expiresOn', { date: formatDate(doc.expires) }) : '';
 
     renderViewPages();
     setDownloadMenu(false);
@@ -567,11 +760,14 @@
 
   // --- document download: its files, or one PDF ------------------------------------------
 
-  // A single PDF needs every page to be an image or a PDF; for a document that
-  // already is one PDF file, it would just be that file again.
+  // A PDF can only be made of images and PDFs.
+  function pdfConvertible(doc) {
+    return doc.pages.every(function (page) { return page.editable || page.mime === 'application/pdf'; });
+  }
+
+  // For a document that already is one PDF file, it would just be that file again.
   function canDownloadPdf(doc) {
-    var convertible = doc.pages.every(function (page) { return page.editable || page.mime === 'application/pdf'; });
-    return convertible && !(doc.pages.length === 1 && doc.pages[0].mime === 'application/pdf');
+    return pdfConvertible(doc) && !(doc.pages.length === 1 && doc.pages[0].mime === 'application/pdf');
   }
 
   function downloadFiles(doc) {
@@ -755,6 +951,8 @@
     $('submitDocument').textContent = t(doc ? 'save' : 'upload');
     titleInput.value = doc ? doc.title : '';
     dateInput.value = doc ? doc.date : todayIso();
+    expiresInput.value = doc && doc.expires ? doc.expires : '';
+    renderClearExpires();
     renderSectionSelect(doc ? doc.section : activeSectionId);
     formTagIds = doc ? doc.tags.slice() : (activeTagId ? [activeTagId] : []);
     newTagInput.value = '';
@@ -766,6 +964,18 @@
     if (doc) renderEditPages(); else renderPendingPages();
     documentDialog.showModal();
   }
+
+  function renderClearExpires() {
+    $('clearExpiresBtn').hidden = !expiresInput.value;
+  }
+
+  expiresInput.addEventListener('input', renderClearExpires);
+  expiresInput.addEventListener('change', renderClearExpires);
+
+  $('clearExpiresBtn').addEventListener('click', function () {
+    expiresInput.value = '';
+    renderClearExpires();
+  });
 
   $('takePhotoBtn').addEventListener('click', function () {
     cameraInput.value = '';
@@ -809,7 +1019,7 @@
     if (editingDoc) {
       documentStatus.textContent = t('saving');
       request = api('PUT', 'api/documents/' + editingDoc.id, {
-        title: title, date: dateInput.value, section: sectionId, tags: formTagIds
+        title: title, date: dateInput.value, expires: expiresInput.value || null, section: sectionId, tags: formTagIds
       });
     } else {
       if (!pendingFiles.length) {
@@ -820,6 +1030,7 @@
       form.append('section', sectionId);
       form.append('title', title);
       form.append('date', dateInput.value);
+      if (expiresInput.value) form.append('expires', expiresInput.value);
       formTagIds.forEach(function (tagId) { form.append('tags', tagId); });
       pendingFiles.forEach(function (file) { form.append('files', file); });
       documentStatus.textContent = t('uploading');

@@ -39,6 +39,7 @@ Then open http://localhost:8080. The settings in `.env` are explained in the
 ## Features
 
 - **Your own sections and tags**: one section per person, pet, car or house, and tags across them.
+- **Search** by title, and **expiry dates** with a badge on what expired or expires soon.
 - **Multi-page documents** straight from the phone camera, plus PDFs and any other file.
 - **Page editing**: crop, rotate, a "scanned" look, or convert to PNG or PDF, always undoable.
 - **Plain files you can browse**: the volume is an ordinary folder tree with readable names.

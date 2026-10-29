@@ -26,6 +26,14 @@
 
 <nav class="section-tabs" id="sectionTabs"></nav>
 
+<div class="search-bar" id="searchBar" hidden>
+  <label class="search-field">
+    <span class="btn-icon"></span>
+    <input type="search" id="searchInput" autocomplete="off" enterkeyhint="search" data-i18n-placeholder="searchPlaceholder" data-i18n-title="search">
+  </label>
+  <div class="tag-filter search-scope" id="searchScope" hidden></div>
+</div>
+
 <div class="tag-filter" id="tagFilter"></div>
 
 <div id="welcome" class="welcome" hidden>
@@ -42,7 +50,15 @@
   <span id="selectionCount"></span>
   <div class="selection-bar-actions">
     <button type="button" id="cancelSelection"><span class="btn-icon"></span><span data-i18n="cancel"></span></button>
-    <button type="button" id="downloadSelected" class="primary"><span class="btn-icon"></span><span data-i18n="download"></span></button>
+    <div class="menu-anchor">
+      <button type="button" id="downloadSelected" class="primary" aria-haspopup="menu"><span class="btn-icon"></span><span data-i18n="download"></span></button>
+      <div class="menu menu-end" id="selectionMenu" role="menu" hidden>
+        <button type="button" id="downloadSelectedFiles" role="menuitem"><span class="btn-icon"></span><span data-i18n="downloadZip"></span></button>
+        <button type="button" id="downloadSelectedPdfs" role="menuitem"><span class="btn-icon"></span><span data-i18n="downloadPdfs"></span></button>
+        <button type="button" id="downloadSelectedPdf" role="menuitem"><span class="btn-icon"></span><span data-i18n="downloadPdf"></span></button>
+        <p class="menu-note" id="pdfUnavailableNote" data-i18n="pdfUnavailable" hidden></p>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -64,6 +80,14 @@
         <span data-i18n="section"></span>
         <select id="sectionSelect"></select>
       </label>
+    </div>
+
+    <div class="field">
+      <label for="expiresInput" data-i18n="expiresLabel"></label>
+      <div class="input-with-button">
+        <input type="date" id="expiresInput">
+        <button type="button" id="clearExpiresBtn" data-i18n-title="clearExpiry"></button>
+      </div>
     </div>
 
     <div class="field">
@@ -103,6 +127,7 @@
 <dialog id="viewDialog">
   <h2 id="viewTitle"></h2>
   <div class="view-meta" id="viewMeta"></div>
+  <div class="view-expiry" id="viewExpiry" hidden><span class="btn-icon"></span><span id="viewExpiryText"></span></div>
   <div class="chips view-tags" id="viewTags"></div>
   <div id="viewPages"></div>
   <div class="dialog-actions icon-actions">

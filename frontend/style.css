@@ -303,6 +303,46 @@ header button.ghost {
   color: var(--ink-faint);
 }
 
+/* --- search ------------------------------------------------------------------- */
+
+.search-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px 0;
+}
+
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  color: var(--ink-faint);
+}
+
+.search-field:focus-within {
+  border-color: var(--accent);
+}
+
+.search-field input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 0;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.tag-filter.search-scope {
+  padding: 0;
+}
+
 .tag-filter,
 .chips {
   display: flex;
@@ -327,6 +367,18 @@ header button.ghost {
 
 .chips button {
   background: var(--bg-panel-2);
+}
+
+.tag-filter button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.tag-filter button svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
 }
 
 .tag-filter button.active,
@@ -453,6 +505,39 @@ header button.ghost {
   border-radius: 10px;
 }
 
+/* Fixed colors, like the page badge: they sit on photos, whatever the theme. */
+.expiry-badge,
+.view-expiry {
+  font-weight: 600;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+}
+
+.expiry-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  max-width: calc(100% - 36px);  /* clear of the selection checkbox */
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expiry-badge.soon,
+.view-expiry.soon {
+  background: #f0b429;
+  color: #241800;
+}
+
+.expiry-badge.expired,
+.view-expiry.expired {
+  background: #e5484d;
+  color: #fff;
+}
+
 .doc-title {
   font-size: 0.8rem;
   font-weight: 600;
@@ -484,6 +569,12 @@ header button.ghost {
 .selection-bar-actions {
   display: flex;
   gap: 8px;
+}
+
+#selectionCount {
+  min-width: 0;
+  margin-right: 12px;
+  font-size: 0.9rem;
 }
 
 /* --- dialogs ----------------------------------------------------------------------- */
@@ -696,20 +787,41 @@ dialog h3 {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
-.icon-actions .menu button {
+.menu-end {
+  left: auto;
+  right: 0;
+}
+
+.menu-anchor .menu button {
   justify-content: flex-start;
   gap: 10px;
   width: auto;
   height: auto;
   padding: 9px 10px;
+  border: none;
   border-radius: 6px;
+  background: none;
+  color: var(--ink);
   font-size: 0.85rem;
+  font-weight: 400;
   white-space: nowrap;
 }
 
-.icon-actions .menu .btn-icon svg {
+.menu-anchor .menu button:not(:disabled):hover {
+  background: var(--bg-panel-2);
+}
+
+.menu-anchor .menu .btn-icon svg {
   width: 16px;
   height: 16px;
+}
+
+.menu-note {
+  max-width: 240px;
+  margin: 4px 10px 6px;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--ink-faint);
 }
 
 #confirmDialog p,
@@ -739,6 +851,48 @@ dialog h3 {
   font-size: 0.8rem;
   color: var(--ink-faint);
   margin-bottom: 10px;
+}
+
+.view-expiry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 3px 10px;
+  font-size: 0.78rem;
+}
+
+.view-expiry:not(.soon):not(.expired) {
+  background: var(--bg-panel-2);
+  color: var(--ink-dim);
+  font-weight: 400;
+}
+
+.view-expiry .btn-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.input-with-button {
+  display: flex;
+  gap: 6px;
+}
+
+.input-with-button button {
+  flex: none;
+  width: 38px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--bg-panel-2);
+  color: var(--ink-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.input-with-button button svg {
+  width: 16px;
+  height: 16px;
 }
 
 .view-tags {
