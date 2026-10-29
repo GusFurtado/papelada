@@ -334,12 +334,20 @@ def delete_tag(tag_id: TagId, lib: Library = Depends(get_library)) -> dict:
 class DocumentUpdate(BaseModel):
     title: str = Field(description="Also the file name of its pages in the volume.")
     date: str = Field(description="The document's own date, `YYYY-MM-DD`.", examples=["2026-10-25"])
+    expires: Optional[str] = Field(
+        None, description="When the document expires, `YYYY-MM-DD`, or none. Leaving it out clears it."
+    )
     section: str = Field(description="The section's id. Changing it moves the files.")
     tags: List[str] = Field([], description="Tag ids. This replaces the document's tags.")
 
 
 class DownloadRequest(BaseModel):
     ids: List[str] = Field(description="The documents' ids.")
+
+
+class PdfDownloadRequest(DownloadRequest):
+    merge: bool = Field(False, description="All the documents in one PDF, in the order of `ids`, "
+                        "instead of a zip with one PDF per document.")
 
 
 class CropBox(BaseModel):
@@ -363,13 +371,15 @@ class PageEdits(BaseModel):
 def list_documents(
     section: Annotated[Optional[str], Query(description="Only this section's documents (its id).")] = None,
     tag: Annotated[Optional[str], Query(description="Only documents with this tag (its id).")] = None,
+    q: Annotated[Optional[str], Query(description="Only documents whose title has every word of this, "
+                                      "ignoring case and accents.")] = None,
     lib: Library = Depends(get_library),
 ) -> list:
-    """Newest first, by `date` and then upload time. Each page lists its `path` in
-    the volume, its `mime`, `size` and `rev` (bumped on every edit, so it can key
-    caches), whether it was `edited`, and whether it's `editable` (an image the
-    editor can open)."""
-    return lib.list_documents(section, tag)
+    """Newest first, by `date` and then upload time. `expires` is the document's
+    expiry date, or null. Each page lists its `path` in the volume, its `mime`,
+    `size` and `rev` (bumped on every edit, so it can key caches), whether it was
+    `edited`, and whether it's `editable` (an image the editor can open)."""
+    return lib.list_documents(section, tag, q)
 
 
 @router.post(
@@ -377,7 +387,8 @@ def list_documents(
     tags=["Documents"],
     summary="Upload a document",
     responses={
-        400: {"description": "`title_required`, `too_long`, `invalid_date`, `unknown_tag`, `pages_required` or `empty_file`."},
+        400: {"description": "`title_required`, `too_long`, `invalid_date`, `invalid_expiry`, `unknown_tag`, "
+              "`pages_required` or `empty_file`."},
         404: {"description": "`section_not_found`."},
     },
 )
@@ -385,6 +396,7 @@ def create_document(
     section: str = Form(..., description="The section's id."),
     title: str = Form(..., description="Also the pages' file name in the volume."),
     date: str = Form(..., description="The document's own date, `YYYY-MM-DD`."),
+    expires: Optional[str] = Form(None, description="When the document expires, `YYYY-MM-DD`, if it does."),
     tags: List[str] = Form([], description="Tag ids."),
     files: List[UploadFile] = File(..., description="The pages, in order. Any file type."),
     lib: Library = Depends(get_library),
@@ -395,7 +407,7 @@ def create_document(
         (file.filename or "", _normalize_mime(file.content_type, file.filename or ""), file.file.read()) for file in files
     ]
     uploaded_at = datetime.now(timezone.utc).isoformat()
-    return lib.create_document(section, title, date, tags, pages, uploaded_at)
+    return lib.create_document(section, title, date, tags, pages, uploaded_at, expires)
 
 
 @router.post(
@@ -415,19 +427,43 @@ def download_documents(body: DownloadRequest, lib: Library = Depends(get_library
     )
 
 
+@router.post(
+    "/documents/pdf",
+    tags=["Documents"],
+    summary="Download documents as PDFs",
+    response_class=Response,
+    responses={
+        200: {"content": {"application/zip": {}, "application/pdf": {}}},
+        400: {"description": "`not_exportable`: a page of the document `title` is neither an image the editor "
+              "can open nor a valid PDF."},
+        **NOT_FOUND,
+    },
+)
+def download_pdfs(body: PdfDownloadRequest, lib: Library = Depends(get_library)) -> Response:
+    """Each document as one PDF, like `GET /documents/{doc_id}/pdf`: `papelada.zip`
+    with one PDF per document (`Section/Title.pdf`), or with `merge`, one PDF of
+    them all (`papelada.pdf`, or the document's name when there's only one)."""
+    content, filename = lib.export_pdfs(body.ids, body.merge)
+    return Response(
+        content=content,
+        media_type="application/pdf" if body.merge else "application/zip",
+        headers={"Content-Disposition": _content_disposition("attachment", filename), "Cache-Control": "no-cache"},
+    )
+
+
 @router.put(
     "/documents/{doc_id}",
     tags=["Documents"],
     summary="Change a document's details",
     responses={
-        400: {"description": "`title_required`, `too_long`, `invalid_date` or `unknown_tag`."},
+        400: {"description": "`title_required`, `too_long`, `invalid_date`, `invalid_expiry` or `unknown_tag`."},
         404: {"description": "`document_not_found` or `section_not_found`."},
     },
 )
 def update_document(doc_id: DocId, body: DocumentUpdate, lib: Library = Depends(get_library)) -> dict:
     """A new title or section renames or moves the document's files to match.
     Returns the document."""
-    return lib.update_document(doc_id, body.title, body.date, body.section, body.tags)
+    return lib.update_document(doc_id, body.title, body.date, body.section, body.tags, body.expires)
 
 
 @router.delete(

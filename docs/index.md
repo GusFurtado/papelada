@@ -22,6 +22,9 @@ later.
 - **Your own sections**, one per person, pet, car, house, or anything else, each with
   an icon you pick. Reorder, rename and delete them any time.
 - **Tags** that work across sections (Health, Taxes, Travel...), to filter documents.
+- **Search** by title, in every section or only one, ignoring case and accents.
+- **Expiry dates**, optional: documents that expired or expire within 30 days get a
+  badge, and a filter shows only those.
 - **Multi-page documents**: take one photo per page, straight from the phone camera,
   or add PDFs and any other file.
 - **Edit a photographed page**: crop, rotate, a "scanned" look (grayscale, more
@@ -35,8 +38,9 @@ later.
 - **Optional login** for one user, set with two environment variables.
 - **Scan** the volume to pick up files and folders you added by hand.
 - Six color themes, light and dark.
-- **Download** a document as one PDF, or a selection of documents as a zip, laid out
-  like the volume.
+- **Download** a document as one PDF. A selection of documents downloads as a zip of
+  their files laid out like the volume, a zip with one PDF per document, or one PDF of
+  them all, in the order you selected them.
 - English and Brazilian Portuguese, picked from the browser's language.
 - One small container: Python (FastAPI) and a plain JS frontend, no database, no
   build step, no third-party requests (fonts and libraries are bundled), except on the
