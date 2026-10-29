@@ -13,8 +13,8 @@ later.
 *Papelada* is Portuguese for "paperwork", or more precisely "a pile of papers".
 
 <p>
-  <img src="assets/screenshot-list.png" width="165" alt="Documents of one section, with tag filters">
-  <img src="assets/screenshot-document.png" width="165" alt="A document, with the path of its file in the volume">
+  <img src="assets/screenshot-list.png" width="165" alt="Documents of one section, with search, filters and expiry badges">
+  <img src="assets/screenshot-document.png" width="165" alt="A document, with its expiry date and the path of its file in the volume">
   <img src="assets/screenshot-editor.png" width="165" alt="The page editor: cropping a photographed card, with the scanned filter on">
   <img src="assets/screenshot-section.png" width="165" alt="Editing a section: name and icon">
 </p>
